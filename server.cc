@@ -33,12 +33,14 @@
 #include "pcwrap.h"
 
 struct termios exit_tattr;
+bool exit_attr_set = 0;
 
 // child == bash exited, send end-sequence
 // so psc-local can reset its rc4 state
 void sig_chld(int)
 {
-	tcsetattr(fileno(stdin), TCSANOW, &exit_tattr);
+	if (exit_attr_set)
+		tcsetattr(fileno(stdin), TCSANOW, &exit_tattr);
 	write(fileno(stdout), "*\n", 2);
 	exit(0);
 }
@@ -69,16 +71,16 @@ int main(int argc, char **argv)
 
 	fix_size(pt.slave());
 
-	if (tcgetattr(fileno(stdin), &tattr) < 0) {
-		die("tcgetattr");
+	if (tcgetattr(fileno(stdin), &tattr) >= 0) {
+		exit_tattr = tattr;
+
+		//tattr.c_lflag &= ~ECHO;
+		cfmakeraw(&tattr);
+
+		/* May fails when we are on a portshell */
+		tcsetattr(fileno(stdin), TCSANOW, &tattr);
+		exit_attr_set = 1;
 	}
-	exit_tattr = tattr;
-
-	//tattr.c_lflag &= ~ECHO;
-	cfmakeraw(&tattr);
-
-	/* May fails when we are on a portshell */
-	tcsetattr(fileno(stdin), TCSANOW, &tattr);
 
 	struct sigaction sa;
 	memset(&sa, 0, sizeof(sa));
@@ -149,7 +151,8 @@ int main(int argc, char **argv)
 		}
 	}
 
-	tcsetattr(fileno(stdin), TCSANOW, &exit_tattr);
+	if (exit_attr_set)
+		tcsetattr(fileno(stdin), TCSANOW, &exit_tattr);
 	write(fileno(stdout), "*\n", 2);
 	return 0;
 }
