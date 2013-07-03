@@ -76,6 +76,8 @@ public:
 
 	int write_wsize();
 
+	int write_cmd(const char *);
+
 	int check_wsize(int);
 
 	int r_fileno();

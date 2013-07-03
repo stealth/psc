@@ -156,34 +156,47 @@ int main(int argc, char **argv)
 
 		memset(wbuf, 0, sizeof(wbuf));
 		memset(rbuf, 0, sizeof(rbuf));
+
+		if (winsize_changed) {
+			psc->write_wsize();
+			winsize_changed = 0;
+		}
+
 		if (select(pt.master() + 1, &rset, NULL, NULL, NULL) < 0) {
-			if (errno == EINTR) {
-				if (winsize_changed) {
-					psc->write_wsize();
-					winsize_changed = 0;
-				}
+			if (errno == EINTR)
 				continue;
-			} else {
+			else
 				die("psc: select");
-			}
 		}
 
 		if (FD_ISSET(0, &rset)) {
 			if ((r = read(0, wbuf, sizeof(wbuf))) <= 0) {
-				die("psc: read");
+				if (errno == EINTR)
+					continue;
+				else
+					die("psc: read");
 			}
 			if (psc->write(wbuf, r) <= 0) {
-				die(psc->why());
+				if (errno == EINTR)
+					continue;
+				else
+					die(psc->why());
 			}
 		} else if (FD_ISSET(pt.master(), &rset)) {
 			if ((r = psc->read(rbuf, sizeof(rbuf))) < 0) {
-				die(psc->why());
+				if (errno == EINTR)
+					continue;
+				else
+					die(psc->why());
 			}
 			// STARTTLS/end-sequence seen
 			if (r == 0)
 				continue;
 			if (write(1, rbuf, r) <= 0) {
-				die("psc: write");
+				if (errno == EINTR)
+					continue;
+				else
+					die("psc: write");
 			}
 		}
 	}

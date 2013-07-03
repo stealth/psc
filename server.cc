@@ -36,13 +36,10 @@ struct termios exit_tattr;
 bool exit_attr_set = 0;
 
 // child == bash exited, send end-sequence
-// so psc-local can reset its rc4 state
+// so psc-local can reset its crypto state
 void sig_chld(int)
 {
-	if (exit_attr_set)
-		tcsetattr(fileno(stdin), TCSANOW, &exit_tattr);
-	write(fileno(stdout), "*\n", 2);
-	exit(0);
+	// empty, just set to get an EINTR
 }
 
 
@@ -153,7 +150,8 @@ int main(int argc, char **argv)
 
 	if (exit_attr_set)
 		tcsetattr(fileno(stdin), TCSANOW, &exit_tattr);
-	write(fileno(stdout), "*\n", 2);
+
+	psc.write_cmd("exit");
 	return 0;
 }
 

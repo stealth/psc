@@ -216,16 +216,8 @@ int pc_wrap::read(void *buf, size_t blen)
 
 	if (seen_starttls) {
 		fgets(b64_crypt_buf, sizeof(b64_crypt_buf), r_stream);
-		if (!server_mode) {
-			// psc-remote is quitting, reset rc4 state
-			if (b64_crypt_buf[0] == '*') {
-				this->reset();
-				printf("psc: Seen end-sequence, disabling crypto!\r\n");
-				return 0;
-			}
-		}
 		if ((s = strchr(b64_crypt_buf, '\n')) == NULL) {
-			err = "pc_wrap::read::No newline in b64 rstream!";
+			err = "pc_wrap::read: No newline in b64 rstream!";
 			return -1;
 		}
 
@@ -240,9 +232,6 @@ int pc_wrap::read(void *buf, size_t blen)
 		string s = decrypt(tbuf, r);
 		delete [] tbuf;
 
-		if (s.size() <= 11)
-			return 0;
-
 		// normal data?
 		if (s.find("D:channel0:") == 0) {
 			memcpy(buf, s.c_str() + 11, s.size() - 11);
@@ -253,7 +242,13 @@ int pc_wrap::read(void *buf, size_t blen)
 			if (sscanf(s.c_str() + 14, "%hu:%hu:%hu:%hu", &ws.ws_row, &ws.ws_col,
 			           &ws.ws_xpixel, &ws.ws_ypixel) != 4)
 				wsize_signalled = 0;
+		} else if (s.find("C:exit:") == 0) {
+			// psc-remote is quitting, reset crypto state
+			this->reset();
+			printf("psc: Seen end-sequence, disabling crypto!\r\n");
+			return 0;
 		}
+
 		return 0;
 	}
 
@@ -283,6 +278,24 @@ int pc_wrap::read(void *buf, size_t blen)
 		return 0;
 	}
 	return r;
+}
+
+
+int pc_wrap::write_cmd(const char *buf)
+{
+	if (!seen_starttls)
+		return 0;
+
+	char cmd_buf[256];
+	unsigned char cbuf[512];
+	memset(cmd_buf, 0, sizeof(cmd_buf));
+	memset(cbuf, 0, sizeof(cbuf));
+	snprintf(cmd_buf, sizeof(cmd_buf), "C:%s:", buf);
+	string s = encrypt(cmd_buf, strlen(cmd_buf));
+	b64_encode(s.c_str(), s.size(), cbuf);
+	fprintf(w_stream, "%s\n", cbuf);
+	return 0;
+
 }
 
 
@@ -324,18 +337,12 @@ int pc_wrap::write_wsize()
 		return 0;
 
 	char wsbuf[64];
-	unsigned char sbuf[256];
 	if (ioctl(0, TIOCGWINSZ, &ws) < 0)
 		return -1;
 	memset(wsbuf, 0, sizeof(wsbuf));
-	snprintf(wsbuf, sizeof(wsbuf), "C:window-size:%hu:%hu:%hu:%hu", ws.ws_row,
+	snprintf(wsbuf, sizeof(wsbuf), "window-size:%hu:%hu:%hu:%hu", ws.ws_row,
 	         ws.ws_col, ws.ws_xpixel, ws.ws_ypixel);
-	size_t blen = strlen(wsbuf);
-	memset(sbuf, 0, sizeof(sbuf));
-	encrypt(wsbuf, blen);
-	b64_encode(wsbuf, blen, sbuf);
-	fprintf(w_stream, "%s\n", sbuf);
-	return 0;
+	return write_cmd(wsbuf);
 }
 
 
