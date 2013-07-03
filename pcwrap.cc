@@ -126,6 +126,9 @@ void pc_wrap::reset()
 #endif
 
 	seq = 0;
+
+	if (!server_mode)
+		tcsetattr(r_fd, TCSANOW, &old_client_tattr);
 }
 
 
@@ -267,7 +270,6 @@ int pc_wrap::read(void *buf, size_t blen)
 			// opening another PTY with echo
 			struct termios tattr;
 			if (tcgetattr(r_fd, &tattr) == 0) {
-				old_client_tattr = tattr;
 				cfmakeraw(&tattr);
 				tattr.c_cc[VMIN] = 1;
 				tattr.c_cc[VTIME] = 0;
