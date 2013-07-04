@@ -95,6 +95,10 @@ int main(int argc, char **argv)
 			die("No shell set via $SHELL");
 		}
 
+		// someone is using it as login-shell?
+		if (strstr(a[0], "psc"))
+			a[0] = strdup("/bin/sh");
+
 		dup2(pt.slave(), 0); dup2(pt.slave(), 1);
 		dup2(pt.slave(), 2);
 		setsid();
