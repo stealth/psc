@@ -27,7 +27,6 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <termios.h>
-#include <assert.h>
 #include <sys/ioctl.h>
 
 #include "pcwrap.h"
@@ -43,7 +42,7 @@ using namespace std;
 
 pc_wrap::pc_wrap(int rfd, int wfd)
 	: r_fd(rfd), w_fd(wfd), seen_starttls(0),
-	  starttls_seq(STARTTLS), r_stream(NULL), w_stream(NULL),
+	  marker("*"), err(""), recent(""), starttls(STARTTLS), ahead(""), r_stream(NULL), w_stream(NULL),
 	  server_mode(0), rc4_k1(NULL), rc4_k2(NULL), wsize_signalled(0)
 {
 	if ((r_stream = fdopen(r_fd, "r")) == NULL)
@@ -210,15 +209,50 @@ string pc_wrap::encrypt(char *buf, int len)
 
 int pc_wrap::read(void *buf, size_t blen)
 {
-	int r;
-	char b64_crypt_buf[2*BLOCK_SIZE];
+	ssize_t r;
+	size_t ur;
+	char b64_crypt_buf[2*BLOCK_SIZE], esc = 0;
 	char *s = NULL;
 
-	assert(blen >= 3*sizeof(b64_crypt_buf)/4);
+	if (blen < 3*sizeof(b64_crypt_buf)/4 || blen < sizeof(esc)) {
+		err = "pc_wrap::read: input buffer too small";
+		return -1;
+	}
 	memset(b64_crypt_buf, 0, sizeof(b64_crypt_buf));
 
 	if (seen_starttls) {
-		fgets(b64_crypt_buf, sizeof(b64_crypt_buf), r_stream);
+		// fetch any ahead iread bytes after STARTTLs seen
+		if (ahead.size() > 0) {
+			if (ahead.size() >= sizeof(b64_crypt_buf)/2) {
+				err = "pc_wrap::read: insane large ahead string!";
+				return -1;
+			}
+			memcpy(b64_crypt_buf, ahead.c_str(), ahead.size());
+
+			// No newline in ahead string?
+			if ((s = strchr(b64_crypt_buf, '\n')) == NULL)
+				fgets(b64_crypt_buf + ahead.size(), sizeof(b64_crypt_buf) - ahead.size(), r_stream);
+			ahead = "";
+		} else {
+			// peek into stream to find potential ESC sequences
+			if ((ur = fread(&esc, 1, 1, r_stream)) == 0) {
+				err = "pc_wrap::read: invalid fread!\n";
+				return -1;
+			}
+
+			// marker found?
+			if (marker[0] == esc) {
+				ungetc(esc, r_stream);
+				fgets(b64_crypt_buf, sizeof(b64_crypt_buf), r_stream);
+			} else {
+				if (!server_mode)
+					printf("psc: invalid character, ignoring\n");
+				return 0;
+			}
+		}
+
+		// when here, we have a valid b64 encoded crypted string
+
 		if ((s = strchr(b64_crypt_buf, '\n')) == NULL) {
 			err = "pc_wrap::read: No newline in b64 rstream!";
 			return -1;
@@ -231,7 +265,7 @@ int pc_wrap::read(void *buf, size_t blen)
 			return -1;
 		}
 		memset(tbuf, 0, sizeof(b64_crypt_buf));
-		r = b64_decode(b64_crypt_buf, (unsigned char*)tbuf);
+		r = b64_decode(b64_crypt_buf + marker.size(), (unsigned char*)tbuf);
 		string s = decrypt(tbuf, r);
 		delete [] tbuf;
 
@@ -262,7 +296,19 @@ int pc_wrap::read(void *buf, size_t blen)
 		return -1;
 	}
 
-	if (strncmp((char*)buf, starttls_seq, strlen(starttls_seq)) == 0) {
+	// as slow links read output one-bye-one or in small chunks, we need
+	// to slide-match STARTTLS sequence
+	recent += string((char *)buf, r);
+	string::size_type i = recent.find(starttls);
+
+	if (i != string::npos) {
+		fflush(r_stream);
+
+		// keep any data that we read "ahead" of STARTTLS
+		if (i + starttls.size() > recent.size())
+			ahead = recent.substr(i + starttls.size());
+		recent = "";
+
 		printf("psc: Seen STARTTLS sequence, enabling crypto.\r\n");
 		seen_starttls = 1;
 		if (!server_mode) {
@@ -279,6 +325,11 @@ int pc_wrap::read(void *buf, size_t blen)
 		}
 		return 0;
 	}
+
+	string::size_type nl = recent.find_last_of('\n');
+	if (nl != string::npos && nl + 1 < recent.size())
+		recent = recent.substr(nl + 1);
+
 	return r;
 }
 
@@ -295,7 +346,7 @@ int pc_wrap::write_cmd(const char *buf)
 	snprintf(cmd_buf, sizeof(cmd_buf), "C:%s:", buf);
 	string s = encrypt(cmd_buf, strlen(cmd_buf));
 	b64_encode(s.c_str(), s.size(), cbuf);
-	fprintf(w_stream, "%s\n", cbuf);
+	fprintf(w_stream, "%s%s\n", marker.c_str(), cbuf);
 	return 0;
 
 }
@@ -304,7 +355,12 @@ int pc_wrap::write_cmd(const char *buf)
 int pc_wrap::write(const void *buf, size_t blen)
 {
 	int r = 0;
-	assert(blen <= BLOCK_SIZE);
+
+	if (blen > BLOCK_SIZE) {
+		err = "pc_wrap::write: too large buffer!\n";
+		return -1;
+	}
+
 	char *crypt_buf = NULL;
 	unsigned char *b64_crypt_buf = NULL;
 
@@ -320,9 +376,9 @@ int pc_wrap::write(const void *buf, size_t blen)
 		b64_crypt_buf = new (nothrow) unsigned char[2*s.size() + 64];
 		if (!b64_crypt_buf)
 			return -1;
-		memset(b64_crypt_buf, 0, 2*s.size()+ 64);
+		memset(b64_crypt_buf, 0, 2*s.size() + 64);
 		b64_encode(s.c_str(), s.size(), b64_crypt_buf);
-		fprintf(w_stream, "%s\n", b64_crypt_buf);
+		fprintf(w_stream, "%s%s\n", marker.c_str(), b64_crypt_buf);
 
 		delete [] crypt_buf;
 		delete [] b64_crypt_buf;

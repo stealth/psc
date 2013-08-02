@@ -40,8 +40,7 @@ private:
 
 	int r_fd, w_fd;
 	bool seen_starttls;
-	std::string err;
-	const char *starttls_seq;
+	std::string marker, err, recent, starttls, ahead;
 	FILE *r_stream, *w_stream;
 	rc4_key rc4_read_key, rc4_write_key;
 	bool server_mode;

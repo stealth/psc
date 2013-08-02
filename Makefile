@@ -4,7 +4,7 @@ CC=cc
 CXX=c++
 DEFS=-DUSE_SSL
 CFLAGS=-c -Wall -O2 -DPSC_READ_KEY=\"abcd123\" -DPSC_WRITE_KEY=\"abcd567\"\
-	-DSTARTTLS=\"STARTTLS\" -ansi -pedantic $(DEFS)
+	-DSTARTTLS=\"psc-2013-STARTTLS\" -ansi -pedantic $(DEFS)
 CFLAGS+=-DHAVE_UNIX98
 
 all: psc-local psc-remote
