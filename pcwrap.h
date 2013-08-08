@@ -40,7 +40,7 @@ private:
 
 	int r_fd, w_fd;
 	bool seen_starttls;
-	std::string marker, err, recent, starttls, ahead;
+	std::string marker, err, recent, starttls;
 	FILE *r_stream, *w_stream;
 	rc4_key rc4_read_key, rc4_write_key;
 	bool server_mode;
@@ -69,7 +69,7 @@ public:
 
 	~pc_wrap();
 
-	int read(void *, size_t);
+	int read(char *, size_t);
 
 	int write(const void *buf, size_t blen);
 

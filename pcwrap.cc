@@ -42,7 +42,7 @@ using namespace std;
 
 pc_wrap::pc_wrap(int rfd, int wfd)
 	: r_fd(rfd), w_fd(wfd), seen_starttls(0),
-	  marker("*"), err(""), recent(""), starttls(STARTTLS), ahead(""), r_stream(NULL), w_stream(NULL),
+	  marker("*"), err(""), recent(""), starttls(STARTTLS), r_stream(NULL), w_stream(NULL),
 	  server_mode(0), rc4_k1(NULL), rc4_k2(NULL), wsize_signalled(0)
 {
 	if ((r_stream = fdopen(r_fd, "r")) == NULL)
@@ -207,7 +207,7 @@ string pc_wrap::encrypt(char *buf, int len)
 }
 
 
-int pc_wrap::read(void *buf, size_t blen)
+int pc_wrap::read(char *buf, size_t blen)
 {
 	ssize_t r;
 	size_t ur;
@@ -221,34 +221,20 @@ int pc_wrap::read(void *buf, size_t blen)
 	memset(b64_crypt_buf, 0, sizeof(b64_crypt_buf));
 
 	if (seen_starttls) {
-		// fetch any ahead iread bytes after STARTTLs seen
-		if (ahead.size() > 0) {
-			if (ahead.size() >= sizeof(b64_crypt_buf)/2) {
-				err = "pc_wrap::read: insane large ahead string!";
-				return -1;
-			}
-			memcpy(b64_crypt_buf, ahead.c_str(), ahead.size());
+		// peek into stream to find potential ESC sequences
+		if ((ur = fread(&esc, 1, 1, r_stream)) == 0) {
+			err = "pc_wrap::read: invalid fread!\n";
+			return -1;
+		}
 
-			// No newline in ahead string?
-			if ((s = strchr(b64_crypt_buf, '\n')) == NULL)
-				fgets(b64_crypt_buf + ahead.size(), sizeof(b64_crypt_buf) - ahead.size(), r_stream);
-			ahead = "";
+		// marker found?
+		if (marker[0] == esc) {
+			ungetc(esc, r_stream);
+			fgets(b64_crypt_buf, sizeof(b64_crypt_buf), r_stream);
 		} else {
-			// peek into stream to find potential ESC sequences
-			if ((ur = fread(&esc, 1, 1, r_stream)) == 0) {
-				err = "pc_wrap::read: invalid fread!\n";
-				return -1;
-			}
-
-			// marker found?
-			if (marker[0] == esc) {
-				ungetc(esc, r_stream);
-				fgets(b64_crypt_buf, sizeof(b64_crypt_buf), r_stream);
-			} else {
-				if (!server_mode)
-					printf("psc: invalid character, ignoring\n");
-				return 0;
-			}
+			if (!server_mode)
+				printf("psc: invalid character, ignoring\n");
+			return 0;
 		}
 
 		// when here, we have a valid b64 encoded crypted string
@@ -289,8 +275,8 @@ int pc_wrap::read(void *buf, size_t blen)
 		return 0;
 	}
 
-	r = ::read(r_fd, buf, blen);
-	if (r <= 0) {
+	r = ::read(r_fd, buf, 1);
+	if (r != 1) {
 		err = "pc_wrap::read::";
 		err += strerror(errno);
 		return -1;
@@ -298,17 +284,17 @@ int pc_wrap::read(void *buf, size_t blen)
 
 	// as slow links read output one-bye-one or in small chunks, we need
 	// to slide-match STARTTLS sequence
-	recent += string((char *)buf, r);
+	recent += buf[0];
 	string::size_type i = recent.find(starttls);
-
 	if (i != string::npos) {
 		fflush(r_stream);
 
-		// keep any data that we read "ahead" of STARTTLS
-		if (i + starttls.size() > recent.size())
-			ahead = recent.substr(i + starttls.size());
-		recent = "";
+		if (i > 0 && i < blen)
+			memcpy(buf, recent.c_str(), i);
+		else
+			i = 0;
 
+		recent = "";
 		printf("psc: Seen STARTTLS sequence, enabling crypto.\r\n");
 		seen_starttls = 1;
 		if (!server_mode) {
@@ -323,7 +309,7 @@ int pc_wrap::read(void *buf, size_t blen)
 			}
 			write_wsize();
 		}
-		return 0;
+		return i;
 	}
 
 	string::size_type nl = recent.find_last_of('\n');
