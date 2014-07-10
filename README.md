@@ -81,6 +81,14 @@ command. Then it will tell you whether it has enabled crypto or not.
 NOTE that psc only helps against attackers on the middle hops, not
 on your local machine or the end point.
 
+To get best protection, `psc-remote` should be your login shell
+via __/etc/passwd__ on the remote host which has the following benefits:
+
+* You have a 2FA via your psc-local shell. Nobody can login to your account
+  unless he has your PSC key.
+* Nobody can inject commands in the middle-hops' tty to obtain the secret key
+  while the session is not yet PSC protected
+
 Misc
 ----
 
