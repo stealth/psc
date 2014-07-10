@@ -146,7 +146,8 @@ int main(int argc, char **argv)
 	if (!psc)
 		die("new pc_wrap OOM");
 
-	psc->init(rkey, wkey, 0);
+	if (psc->init(rkey, wkey, 0) < 0)
+		die(psc->why());
 	close(pt.slave());
 
 	for (;;) {

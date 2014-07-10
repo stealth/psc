@@ -3,7 +3,7 @@
 CC=cc
 CXX=c++
 DEFS=-DUSE_SSL
-CFLAGS=-c -Wall -O2 -DPSC_READ_KEY=\"abcd123\" -DPSC_WRITE_KEY=\"abcd567\"\
+CFLAGS=-c -Wall -O2 -DPSC_READ_KEY=\"abcd1234\" -DPSC_WRITE_KEY=\"abcd5678\"\
 	-DSTARTTLS=\"psc-2013-STARTTLS\" -ansi -pedantic $(DEFS)
 CFLAGS+=-DHAVE_UNIX98
 

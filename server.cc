@@ -115,7 +115,8 @@ int main(int argc, char **argv)
 	printf("%s", starttls);
 
 	pc_wrap psc(0, 1);
-	psc.init(rkey, wkey, 1);
+	if (psc.init(rkey, wkey, 1) < 0)
+		die(psc.why());
 	psc.enable_crypto();
 
 	for (;;) {

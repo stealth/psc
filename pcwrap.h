@@ -65,7 +65,7 @@ public:
 
 	int init(unsigned char *, unsigned char *, bool);
 
-	void reset();
+	int reset();
 
 	~pc_wrap();
 

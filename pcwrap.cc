@@ -76,29 +76,36 @@ int pc_wrap::init(unsigned char *k1, unsigned char *k2, bool s)
 	server_mode = s;
 
 #ifdef USE_SSL
+	err = "pc_wrap::init: Initializing crypto CTX failed.";
+
 	r_ctx = (EVP_CIPHER_CTX *)new (nothrow) char[sizeof(EVP_CIPHER_CTX)];
 	w_ctx = (EVP_CIPHER_CTX *)new (nothrow) char[sizeof(EVP_CIPHER_CTX)];
-	if (!r_ctx || !w_ctx) {
-		err = "pc_wrap::init: OOM";
+	if (!r_ctx || !w_ctx)
 		return -1;
-	}
+
 	EVP_CIPHER_CTX_init(r_ctx);
 	EVP_CIPHER_CTX_init(w_ctx);
 
-	EVP_EncryptInit(w_ctx, EVP_bf_ofb(), NULL, w_iv);
-	EVP_DecryptInit(r_ctx, EVP_bf_ofb(), NULL, r_iv);
+	if (EVP_EncryptInit(w_ctx, EVP_bf_ofb(), NULL, w_iv) != 1)
+		return -1;
+	if (EVP_DecryptInit(r_ctx, EVP_bf_ofb(), NULL, r_iv) != 1)
+		return -1;
 
-	EVP_CIPHER_CTX_set_key_length(r_ctx, strlen((char *)rc4_k1));
-	EVP_CIPHER_CTX_set_key_length(w_ctx, strlen((char *)rc4_k2));
+	if (EVP_CIPHER_CTX_set_key_length(r_ctx, strlen((char *)rc4_k1)) != 1)
+		return -1;
+	if (EVP_CIPHER_CTX_set_key_length(w_ctx, strlen((char *)rc4_k2)) != 1)
+		return -1;
 
-	EVP_EncryptInit(w_ctx, EVP_bf_ofb(), w_key, NULL);
-	EVP_DecryptInit(r_ctx, EVP_bf_ofb(), r_key, NULL);
+	if (EVP_EncryptInit(w_ctx, EVP_bf_ofb(), w_key, NULL) != 1)
+		return -1;
+	if (EVP_DecryptInit(r_ctx, EVP_bf_ofb(), r_key, NULL) != 1)
+		return -1;
 #endif
 	return 0;
 }
 
 
-void pc_wrap::reset()
+int pc_wrap::reset()
 {
 	seen_starttls = 0;
 
@@ -108,26 +115,36 @@ void pc_wrap::reset()
 
 #ifdef USE_SSL
 
+	err = "pc_wrap::reset: Resetting crypto CTX failed.";
+
 	EVP_CIPHER_CTX_cleanup(r_ctx);
 	EVP_CIPHER_CTX_cleanup(w_ctx);
 
 	EVP_CIPHER_CTX_init(r_ctx);
 	EVP_CIPHER_CTX_init(w_ctx);
 
-	EVP_EncryptInit(w_ctx, EVP_bf_ofb(), NULL, w_iv);
-	EVP_DecryptInit(r_ctx, EVP_bf_ofb(), NULL, r_iv);
+	if (EVP_EncryptInit(w_ctx, EVP_bf_ofb(), NULL, w_iv) != 1)
+		return -1;
+	if (EVP_DecryptInit(r_ctx, EVP_bf_ofb(), NULL, r_iv) != 1)
+		return -1;
 
-	EVP_CIPHER_CTX_set_key_length(r_ctx, strlen((char *)rc4_k1));
-	EVP_CIPHER_CTX_set_key_length(w_ctx, strlen((char *)rc4_k2));
+	if (EVP_CIPHER_CTX_set_key_length(r_ctx, strlen((char *)rc4_k1)) != 1)
+		return -1;
+	if (EVP_CIPHER_CTX_set_key_length(w_ctx, strlen((char *)rc4_k2)) != 1)
+		return -1;
 
-	EVP_EncryptInit(w_ctx, EVP_bf_ofb(), w_key, NULL);
-	EVP_DecryptInit(r_ctx, EVP_bf_ofb(), r_key, NULL);
+	if (EVP_EncryptInit(w_ctx, EVP_bf_ofb(), w_key, NULL) != 1)
+		return -1;
+	if (EVP_DecryptInit(r_ctx, EVP_bf_ofb(), r_key, NULL) != 1)
+		return -1;
 #endif
 
 	seq = 0;
 
 	if (!server_mode)
 		tcsetattr(r_fd, TCSANOW, &old_client_tattr);
+
+	return 0;
 }
 
 
@@ -267,7 +284,8 @@ int pc_wrap::read(char *buf, size_t blen)
 				wsize_signalled = 0;
 		} else if (s.find("C:exit:") == 0) {
 			// psc-remote is quitting, reset crypto state
-			this->reset();
+			if (this->reset() < 0)
+				return -1;
 			printf("psc: Seen end-sequence, disabling crypto!\r\n");
 			return 0;
 		}
