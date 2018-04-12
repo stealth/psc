@@ -1,7 +1,7 @@
 /*
  * This file is part of port shell crypter (psc).
  *
- * (C) 2006-2013 by Sebastian Krahmer,
+ * (C) 2006-2018 by Sebastian Krahmer,
  *                  sebastian [dot] krahmer [at] gmail [dot] com
  *
  * psc is free software: you can redistribute it and/or modify
@@ -78,13 +78,20 @@ int pc_wrap::init(unsigned char *k1, unsigned char *k2, bool s)
 #ifdef USE_SSL
 	err = "pc_wrap::init: Initializing crypto CTX failed.";
 
-	r_ctx = (EVP_CIPHER_CTX *)new (nothrow) char[sizeof(EVP_CIPHER_CTX)];
-	w_ctx = (EVP_CIPHER_CTX *)new (nothrow) char[sizeof(EVP_CIPHER_CTX)];
+#if (OPENSSL_VERSION_NUMBER < 0x10100000L)
+	r_ctx = reinterpret_cast<EVP_CIPHER_CTX *>(new (nothrow) char[sizeof(EVP_CIPHER_CTX)]);
+	w_ctx = reinterpret_cast<EVP_CIPHER_CTX *>(new (nothrow) char[sizeof(EVP_CIPHER_CTX)]);
 	if (!r_ctx || !w_ctx)
 		return -1;
 
 	EVP_CIPHER_CTX_init(r_ctx);
 	EVP_CIPHER_CTX_init(w_ctx);
+#else
+	r_ctx = EVP_CIPHER_CTX_new();
+	w_ctx = EVP_CIPHER_CTX_new();
+	if (!r_ctx || !w_ctx)
+		return -1;
+#endif
 
 	if (EVP_EncryptInit(w_ctx, EVP_bf_ofb(), NULL, w_iv) != 1)
 		return -1;
@@ -117,11 +124,17 @@ int pc_wrap::reset()
 
 	err = "pc_wrap::reset: Resetting crypto CTX failed.";
 
+#if (OPENSSL_VERSION_NUMBER < 0x10100000L)
 	EVP_CIPHER_CTX_cleanup(r_ctx);
 	EVP_CIPHER_CTX_cleanup(w_ctx);
 
 	EVP_CIPHER_CTX_init(r_ctx);
 	EVP_CIPHER_CTX_init(w_ctx);
+#else
+
+	EVP_CIPHER_CTX_reset(r_ctx);
+	EVP_CIPHER_CTX_reset(w_ctx);
+#endif
 
 	if (EVP_EncryptInit(w_ctx, EVP_bf_ofb(), NULL, w_iv) != 1)
 		return -1;
@@ -157,11 +170,17 @@ pc_wrap::~pc_wrap()
 
 #ifdef USE_SSL
 
+#if (OPENSSL_VERSION_NUMBER < 0x10100000L)
 	EVP_CIPHER_CTX_cleanup(r_ctx);
 	EVP_CIPHER_CTX_cleanup(w_ctx);
 
 	delete [] r_ctx;
 	delete [] w_ctx;
+#else
+	EVP_CIPHER_CTX_free(r_ctx);
+	EVP_CIPHER_CTX_free(w_ctx);
+
+#endif
 #endif
 
 }
