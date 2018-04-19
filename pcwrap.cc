@@ -208,16 +208,16 @@ int pc_wrap::enable_crypto()
 		}
 	} while (!d_seen_starttls);
 
+	d_seen_starttls = 1;
+
 	X509 *x509 = SSL_get_peer_certificate(d_ssl);
 	if (!x509)
 		return build_error("enable_crypto: No peer certificate!", -1);
 
 	if (d_pinned_x509) {
 		if (X509_cmp(x509, d_pinned_x509) != 0)
-			return build_error("enable_crypto: Mismatch with pinned x509 from cmdline.", -1);
+			return build_error("enable_crypto: Mismatch with pinned x509.", -1);
 	}
-
-	d_seen_starttls = 1;
 
 	return 0;
 }

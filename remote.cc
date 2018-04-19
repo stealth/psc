@@ -123,8 +123,11 @@ int main(int argc, char **argv)
 		die(psc.why());
 
 	printf("%s", starttls);
-	if (psc.enable_crypto() < 0)
+	if (psc.enable_crypto() < 0) {
+		if (psc.is_crypted())
+			psc.write_cmd("exit");
 		die(psc.why());
+	}
 
 	for (;;) {
 		FD_ZERO(&rset);
