@@ -31,8 +31,10 @@ using namespace std;
 
 namespace ns_psc {
 
-// no multi threading
-string input = "";
+
+struct b64_ctx {
+	string input{""};
+};
 
 
 int b64_write(BIO *b, const char *buf, int blen)
@@ -51,8 +53,12 @@ int b64_write(BIO *b, const char *buf, int blen)
 
 int b64_read(BIO *b, char *buf, int blen)
 {
-	int n = 0;
+	b64_ctx *ctx = reinterpret_cast<b64_ctx *>(BIO_get_data(b));
+	if (!ctx)
+		return -1;
+	string &input = ctx->input;
 
+	int n = 0;
 	if (input.size() > 0) {
 		n = blen > (int)input.size() ? input.size() : blen;
 		memcpy(buf, input.c_str(), n);
@@ -132,7 +138,10 @@ long b64_ctrl(BIO *b, int cmd, long num, void *ptr)
 
 int b64_create(BIO *b)
 {
-	BIO_set_data(b, nullptr);
+	b64_ctx *ctx = new (nothrow) b64_ctx;
+	if (!ctx)
+		return 0;
+	BIO_set_data(b, ctx);
 	BIO_set_init(b, 1);
 	return 1;
 }
@@ -140,6 +149,8 @@ int b64_create(BIO *b)
 
 int b64_destroy(BIO *b)
 {
+	delete reinterpret_cast<b64_ctx *>(BIO_get_data(b));
+	BIO_set_data(b, nullptr);
 	BIO_set_init(b, 0);
 	return 1;
 }

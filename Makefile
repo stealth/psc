@@ -19,27 +19,27 @@ psc-remote: misc.o remote.o pty.o pty98.o pcwrap.o base64.o bio.o
 	$(CXX) misc.o remote.o pty.o pty98.o pcwrap.o base64.o bio.o -o psc-remote $(LIBS)
 
 pcwrap.o: pcwrap.cc
-	$(CXX) -c $(CXXFLAGS) pcwrap.cc
+	$(CXX) -c $(CXXFLAGS) $<
 
 local.o: local.cc
-	$(CXX) -c $(CXXFLAGS) local.cc
+	$(CXX) -c $(CXXFLAGS) $<
 
 remote.o: remote.cc
-	$(CXX) -c $(CXXFLAGS) remote.cc
+	$(CXX) -c $(CXXFLAGS) $<
 
 misc.o: misc.cc
-	$(CXX) -c $(CXXFLAGS) misc.cc
+	$(CXX) -c $(CXXFLAGS) $<
 
 pty.o: pty.cc
-	$(CXX) -c $(CXXFLAGS) pty.cc
+	$(CXX) -c $(CXXFLAGS) $<
 
 pty98.o: pty98.cc
-	$(CXX) -c $(CXXFLAGS) pty98.cc
+	$(CXX) -c $(CXXFLAGS) $<
 
 base64.o: base64.cc
-	$(CXX) -c $(CXXFLAGS) base64.cc
+	$(CXX) -c $(CXXFLAGS) $<
 
 bio.o: bio.cc
-	$(CXX) -c $(CXXFLAGS) bio.cc
+	$(CXX) -c $(CXXFLAGS) $<
 
 
