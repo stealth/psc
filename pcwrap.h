@@ -33,6 +33,7 @@ extern "C" {
 #include <openssl/ssl.h>
 #include <openssl/bio.h>
 #include <openssl/err.h>
+#include <openssl/x509.h>
 }
 
 
@@ -54,6 +55,7 @@ private:
 	const SSL_METHOD *d_ssl_method{nullptr};
 	SSL *d_ssl{nullptr};
 	BIO *d_rbio_b64{nullptr}, *d_wbio_b64{nullptr}, *d_bio_wfd{nullptr}, *d_bio_rfd{nullptr};
+	X509 *d_pinned_x509{nullptr};
 	int d_ssl_e{0};
 
 	template<class T>
