@@ -31,6 +31,7 @@
 #include <sys/ioctl.h>
 
 #include "pcwrap.h"
+#include "cert.h"
 #include "misc.h"
 #include "bio.h"
 
@@ -87,22 +88,28 @@ int pc_wrap::init(const string &cert, const string &key, bool rem)
 	if (!(d_ssl_ctx = SSL_CTX_new(d_ssl_method)))
 		return build_error("init::SSL_CTX_new", -1);
 
+	//  psc-remote is using the cert to check against what it gets from server
 	if (cert.size()) {
-		if (SSL_CTX_use_certificate_file(d_ssl_ctx, cert.c_str(), SSL_FILETYPE_PEM) != 1)
-			return build_error("init::SSL_CTX_use_certificate", -1);
+		if (!d_is_remote) {
+			if (SSL_CTX_use_certificate_file(d_ssl_ctx, cert.c_str(), SSL_FILETYPE_PEM) != 1)
+				return build_error("init::SSL_CTX_use_certificate", -1);
+		} else {
+			FILE *f = fopen(cert.c_str(), "r");
+			if (f)
+				d_pinned_x509 = PEM_read_X509(f, nullptr, nullptr, nullptr);
+			fclose(f);
+		}
 	}
 
 	if (key.size()) {
 		if (SSL_CTX_use_PrivateKey_file(d_ssl_ctx, key.c_str(), SSL_FILETYPE_PEM) != 1)
 			return build_error("init::SSL_CTX_use_PrivateKey_file", -1);
+		if (SSL_CTX_check_private_key(d_ssl_ctx) != 1)
+			return build_error("init::SSL_CTX_check_private_key", -1);
 	}
 
 	long op = SSL_OP_NO_SSLv2|SSL_OP_NO_SSLv3|SSL_OP_NO_TLSv1|SSL_OP_NO_TLSv1_1;
-	//op |= (SSL_OP_SINGLE_DH_USE|SSL_OP_SINGLE_ECDH_USE|SSL_OP_NO_TICKET);
-
-#ifdef SSL_OP_NO_COMPRESSION
-	op |= SSL_OP_NO_COMPRESSION;
-#endif
+	op |= (SSL_OP_SINGLE_DH_USE|SSL_OP_SINGLE_ECDH_USE|SSL_OP_NO_TICKET);
 
 	if ((unsigned long)(SSL_CTX_set_options(d_ssl_ctx, op) & op) != (unsigned long)op)
 		return build_error("init::SSL_CTX_set_options", -1);
@@ -110,13 +117,20 @@ int pc_wrap::init(const string &cert, const string &key, bool rem)
 	if (d_ciphers.size() > 0 && SSL_CTX_set_cipher_list(d_ssl_ctx, d_ciphers.c_str()) != 1)
 		return build_error("init::SSL_CTX_set_cipher_list", -1);
 
+	// In case psc-remote wasnt given a PEM file on start,
+	// it will use the built-in X509
+	if (!d_pinned_x509 && sizeof(the_certificate) > 1) {
+		const unsigned char *ptr = the_certificate;
+		if (!d2i_X509(&d_pinned_x509, &ptr, sizeof(the_certificate)))
+			d_pinned_x509 = nullptr;
+	}
+
 	return 0;
 }
 
 
 int pc_wrap::reset()
 {
-
 	SSL_free(d_ssl); d_ssl = nullptr;
 
 	// freed via SSL_free()
@@ -151,6 +165,7 @@ int pc_wrap::reset()
 pc_wrap::~pc_wrap()
 {
 	SSL_CTX_free(d_ssl_ctx);
+	X509_free(d_pinned_x509);
 }
 
 
@@ -192,6 +207,15 @@ int pc_wrap::enable_crypto()
 			return build_error("read::SSL_connect", -1);
 		}
 	} while (!d_seen_starttls);
+
+	X509 *x509 = SSL_get_peer_certificate(d_ssl);
+	if (!x509)
+		return build_error("enable_crypto: No peer certificate!", -1);
+
+	if (d_pinned_x509) {
+		if (X509_cmp(x509, d_pinned_x509) != 0)
+			return build_error("enable_crypto: Mismatch with pinned x509 from cmdline.", -1);
+	}
 
 	d_seen_starttls = 1;
 

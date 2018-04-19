@@ -7,10 +7,14 @@ CXXFLAGS=-std=c++11 -Wall -O2 -DSTARTTLS=\"psc-2018-STARTTLS\" -pedantic $(DEFS)
 CXXFLAGS+=-DHAVE_UNIX98
 LIBS=-lssl -lcrypto
 
-all: psc-local psc-remote
+all: newkeys psc-local psc-remote
 
 clean:
 	rm -f *.o
+
+newkeys: x509.h
+	./newkeys
+	openssl x509 -C -out x509.h -noout -in cert.pem
 
 psc-local: misc.o local.o pcwrap.o pty.o pty98.o base64.o bio.o
 	$(CXX) misc.o pcwrap.o local.o pty.o pty98.o base64.o bio.o -o psc-local $(LIBS)
