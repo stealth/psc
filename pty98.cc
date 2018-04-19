@@ -35,6 +35,11 @@
 #include <sys/stropts.h>
 #endif
 
+
+using namespace std;
+
+namespace ns_psc {
+
 pty98::pty98(const pty98 &rhs)
 	: pty(rhs)
 {
@@ -84,5 +89,8 @@ int pty98::open()
 
 #endif
 	return 0;
+}
+
+
 }
 

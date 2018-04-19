@@ -32,6 +32,10 @@
 #include "misc.h"
 #include "pcwrap.h"
 
+
+using namespace std;
+using namespace ns_psc;
+
 struct termios exit_tattr;
 bool exit_attr_set = 0;
 
@@ -53,11 +57,13 @@ int main(int argc, char **argv)
 	fd_set rset;
 	pid_t pid;
 	int r;
-	char wbuf[BLOCK_SIZE], rbuf[2*BLOCK_SIZE];
+	char wbuf[BLOCK_SIZE] = {0}, rbuf[2*BLOCK_SIZE] = {0};
 	struct termios tattr;
 	const char *starttls = STARTTLS;
-	unsigned char *rkey = (unsigned char*)PSC_WRITE_KEY;
-	unsigned char *wkey = (unsigned char*)PSC_READ_KEY;
+
+	string certfile = "./cert.pem";
+	if (argc == 2)
+		certfile = argv[1];
 
 	setbuffer(stdin, NULL, 0);
 	setbuffer(stdout, NULL, 0);
@@ -112,12 +118,13 @@ int main(int argc, char **argv)
 
 	close(pt.slave());
 
-	printf("%s", starttls);
-
-	pc_wrap psc(0, 1);
-	if (psc.init(rkey, wkey, 1) < 0)
+	pc_wrap psc("remote", 0, 1);
+	if (psc.init("", "", 1) < 0)
 		die(psc.why());
-	psc.enable_crypto();
+
+	printf("%s", starttls);
+	if (psc.enable_crypto() < 0)
+		die(psc.why());
 
 	for (;;) {
 		FD_ZERO(&rset);

@@ -28,14 +28,14 @@
 #include <termios.h>
 #include <sys/ioctl.h>
 
-
 #include "pty.h"
 #include "pcwrap.h"
 #include "misc.h"
-#include "rc4.h"
 
+using namespace std;
+using namespace ns_psc;
 
-pc_wrap *psc = NULL;
+pc_wrap *psc = nullptr;
 
 struct termios global_tcattr, exit_tattr;
 
@@ -77,10 +77,15 @@ int main(int argc, char **argv)
 	fd_set rset;
 	pid_t pid;
 	int r;
-	char wbuf[BLOCK_SIZE], rbuf[2*BLOCK_SIZE];
+	char wbuf[BLOCK_SIZE] = {0}, rbuf[2*BLOCK_SIZE] = {0};
 	struct termios tattr;
-	unsigned char *rkey = (unsigned char*)PSC_READ_KEY;
-	unsigned char *wkey = (unsigned char*)PSC_WRITE_KEY;
+
+	string keyfile = "./key.pem", certfile = "./cert.pem";
+
+	if (argc > 1)
+		keyfile = argv[1];
+	if (argc > 2)
+		certfile = argv[2];
 
 	struct sigaction sa;
 	memset(&sa, 0, sizeof(sa));
@@ -142,11 +147,11 @@ int main(int argc, char **argv)
 	} else if (pid < 0)
 		die("psc: fork");
 
-	psc = new (nothrow) pc_wrap(pt.master(), pt.master());
+	psc = new (nothrow) pc_wrap("local", pt.master(), pt.master());
 	if (!psc)
 		die("new pc_wrap OOM");
 
-	if (psc->init(rkey, wkey, 0) < 0)
+	if (psc->init(certfile, keyfile, 0) < 0)
 		die(psc->why());
 	close(pt.slave());
 

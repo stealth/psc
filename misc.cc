@@ -33,6 +33,9 @@
 extern struct termios exit_tattr;
 
 
+namespace ns_psc {
+
+
 void die(const char *s)
 {
 	fprintf(stderr, "[%d] %s: %s\n", getpid(), s, strerror(errno));
@@ -50,78 +53,5 @@ void fix_size(int fd)
 		ioctl(fd, TIOCSWINSZ, (char*)&win);
 }
 
-static const char *b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-
-/* The base64 routines have been taken from the Samba 3 source (GPL)
- * and have been slightly modified */
-/* expects enough space in buf */
-size_t b64_decode(const char *s, unsigned char *buf)
-{
-	int bit_offset, byte_offset, idx, i, n;
-	unsigned char *d = buf;
-	const char *p;
-
-	n=i=0;
-
-	while (*s && (p=strchr(b64,*s))) {
-		idx = (int)(p - b64);
-		byte_offset = (i*6)/8;
-		bit_offset = (i*6)%8;
-		d[byte_offset] &= ~((1<<(8-bit_offset))-1);
-		if (bit_offset < 3) {
-			d[byte_offset] |= (idx << (2-bit_offset));
-			n = byte_offset+1;
-		} else {
-			d[byte_offset] |= (idx >> (bit_offset-2));
-			d[byte_offset+1] = 0;
-			d[byte_offset+1] |= (idx << (8-(bit_offset-2))) & 0xFF;
-			n = byte_offset+2;
-		}
-		s++; i++;
-	}
-
-	if (*s == '=') n -= 1;
-
-	return n;
 }
-
-unsigned char *b64_encode(const char *s, size_t len, unsigned char *buf)
-{
-	int bits = 0;
-	int char_count = 0;
-	size_t out_cnt = 0;
-	unsigned char *result = buf;
-
-	while (len--) {
-		int c = (unsigned char) *(s++);
-		bits += c;
-		char_count++;
-		if (char_count == 3) {
-			result[out_cnt++] = b64[bits >> 18];
-			result[out_cnt++] = b64[(bits >> 12) & 0x3f];
-			result[out_cnt++] = b64[(bits >> 6) & 0x3f];
-	    		result[out_cnt++] = b64[bits & 0x3f];
-		    	bits = 0;
-		    	char_count = 0;
-		} else	{
-	    		bits <<= 8;
-		}
-    	}
-	if (char_count != 0) {
-		bits <<= 16 - (8 * char_count);
-		result[out_cnt++] = b64[bits >> 18];
-		result[out_cnt++] = b64[(bits >> 12) & 0x3f];
-		if (char_count == 1) {
-			result[out_cnt++] = '=';
-			result[out_cnt++] = '=';
-		} else {
-			result[out_cnt++] = b64[(bits >> 6) & 0x3f];
-			result[out_cnt++] = '=';
-		}
-	}
-	result[out_cnt] = '\0';	/* terminate */
-	return result;
-}
-
 

@@ -1,45 +1,45 @@
 #
 
+DEFS=
 CC=cc
 CXX=c++
-DEFS=-DUSE_SSL
-CFLAGS=-c -Wall -O2 -DPSC_READ_KEY=\"abcd1234\" -DPSC_WRITE_KEY=\"abcd5678\"\
-	-DSTARTTLS=\"psc-2013-STARTTLS\" -ansi -pedantic $(DEFS)
-CFLAGS+=-DHAVE_UNIX98
+CXXFLAGS=-std=c++11 -Wall -O2 -DSTARTTLS=\"psc-2018-STARTTLS\" -pedantic $(DEFS)
+CXXFLAGS+=-DHAVE_UNIX98
+LIBS=-lssl -lcrypto
 
 all: psc-local psc-remote
 
 clean:
 	rm -f *.o
 
-psc-local: rc4.o misc.o client.o pcwrap.o pty.o pty98.o
-	$(CXX) rc4.o misc.o pcwrap.o client.o pty.o pty98.o -o psc-local -lcrypto
+psc-local: misc.o local.o pcwrap.o pty.o pty98.o base64.o bio.o
+	$(CXX) misc.o pcwrap.o local.o pty.o pty98.o base64.o bio.o -o psc-local $(LIBS)
 
-psc-remote: rc4.o misc.o server.o pty.o pty98.o pcwrap.o
-	$(CXX) rc4.o misc.o server.o pty.o pty98.o pcwrap.o -o psc-remote -lcrypto
+psc-remote: misc.o remote.o pty.o pty98.o pcwrap.o base64.o bio.o
+	$(CXX) misc.o remote.o pty.o pty98.o pcwrap.o base64.o bio.o -o psc-remote $(LIBS)
 
 pcwrap.o: pcwrap.cc
-	$(CXX) $(CFLAGS) pcwrap.cc
+	$(CXX) -c $(CXXFLAGS) pcwrap.cc
 
-client.o: client.cc
-	$(CXX) $(CFLAGS) client.cc
+local.o: local.cc
+	$(CXX) -c $(CXXFLAGS) local.cc
 
-server.o: server.cc
-	$(CXX) $(CFLAGS) server.cc
-
-rc4.o: rc4.c
-	$(CC) $(CFLAGS) rc4.c
+remote.o: remote.cc
+	$(CXX) -c $(CXXFLAGS) remote.cc
 
 misc.o: misc.cc
-	$(CXX) $(CFLAGS) misc.cc
+	$(CXX) -c $(CXXFLAGS) misc.cc
 
 pty.o: pty.cc
-	$(CXX) $(CFLAGS) pty.cc
+	$(CXX) -c $(CXXFLAGS) pty.cc
 
 pty98.o: pty98.cc
-	$(CXX) $(CFLAGS) pty98.cc
+	$(CXX) -c $(CXXFLAGS) pty98.cc
 
-#main.o: main.cc
-#	$(CXX) $(CFLAGS) main.cc
+base64.o: base64.cc
+	$(CXX) -c $(CXXFLAGS) base64.cc
+
+bio.o: bio.cc
+	$(CXX) -c $(CXXFLAGS) bio.cc
 
 

@@ -42,9 +42,11 @@
 
 using namespace std;
 
+namespace ns_psc {
+
 pty::pty(const pty &rhs)
 {
-	if (this == &rhs) 
+	if (this == &rhs)
 		return;
 	_slave = dup(rhs._slave); _master = dup(rhs._master);
 	m = rhs.m; s = rhs.s;
@@ -58,7 +60,7 @@ pty &pty::operator=(const pty &rhs)
 	m = rhs.m; s = rhs.s;
 	return *this;
 }
-	
+
 
 // Open master+slave terminal
 // returns 0 on sucess, -1 on failure
@@ -72,7 +74,7 @@ int pty::open()
 		ptys[8] = *it1;
 		for (; *it2 != 0; ++it2) {
 			ptys[9] = *it2;
-			
+
 			// do master-part
 			if ((_master = ::open(ptys, O_RDWR|O_NOCTTY)) < 0) {
 				if (errno == ENOENT) {
@@ -94,10 +96,10 @@ int pty::open()
 			return 0;
 		}
 	}
-	
+
 	// out of terminals
 	serr = "Dance the funky chicken (or use Unix98 pty's).";
-	return -1;						
+	return -1;
 }
 
 
@@ -128,4 +130,6 @@ const char *pty::why()
 {
 	return serr.c_str();
 }
-	
+
+}
+

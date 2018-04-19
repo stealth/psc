@@ -20,8 +20,8 @@
 
 /* Plain/crypted forwrad wrapper */
 
-#ifndef __pcwrap_h__
-#define __pcwrap_h__
+#ifndef psc_pcwrap_h
+#define psc_pcwrap_h
 
 #include <sys/types.h>
 #include <string.h>
@@ -29,41 +29,61 @@
 #include <stdint.h>
 #include <termios.h>
 #include <unistd.h>
-#include "rc4.h"
-#ifdef USE_SSL
-#include <openssl/evp.h>
-#endif
+extern "C" {
+#include <openssl/ssl.h>
+#include <openssl/bio.h>
+#include <openssl/err.h>
+}
 
+
+namespace ns_psc {
 
 class pc_wrap {
 private:
 
-	int r_fd, w_fd;
-	bool seen_starttls;
-	std::string marker, err, recent, starttls;
-	FILE *r_stream, *w_stream;
-	rc4_key rc4_read_key, rc4_write_key;
-	bool server_mode;
-	unsigned char *rc4_k1, *rc4_k2;
-	struct termios old_client_tattr;
-	struct winsize ws;
-	bool wsize_signalled;
-	uint32_t seq;
+	std::string d_ciphers{"!LOW:!EXP:!MD5:!CAMELLIA:!RC4:!MEDIUM:!DES:!ADH:!3DES:AES256:AESGCM:SHA256:SHA384:@STRENGTH"};
+	int d_rfd{-1}, d_wfd{-1};
+	bool d_seen_starttls{0};
+	std::string d_err{""}, d_recent{""}, d_starttls{STARTTLS}, d_me{""};
+	bool d_is_remote{0};
+	struct termios d_old_client_tattr;
+	struct winsize d_ws;
+	bool d_wsize_signalled{0};
 
-#ifdef USE_SSL
-	EVP_CIPHER_CTX *r_ctx, *w_ctx;
-	unsigned char w_key[EVP_MAX_KEY_LENGTH], r_key[EVP_MAX_KEY_LENGTH];
-	unsigned char w_iv[EVP_MAX_IV_LENGTH], r_iv[EVP_MAX_IV_LENGTH];
-#endif
+	SSL_CTX *d_ssl_ctx{nullptr};
+	const SSL_METHOD *d_ssl_method{nullptr};
+	SSL *d_ssl{nullptr};
+	BIO *d_rbio_b64{nullptr}, *d_wbio_b64{nullptr}, *d_bio_wfd{nullptr}, *d_bio_rfd{nullptr};
+	int d_ssl_e{0};
 
-	std::string encrypt(char *, int);
+	template<class T>
+	T build_error(const std::string &msg, T r)
+	{
+		unsigned long e = 0;
 
-	std::string decrypt(char *, int);
+		d_err = d_me + "::pcwrap::";
+		d_err += msg;
+		if ((e = ERR_get_error()) || d_ssl_e) {
+			if (e == 0)
+				e = d_ssl_e;
+			d_err += ":";
+			d_err += ERR_error_string(e, nullptr);
+			ERR_clear_error();
+			d_ssl_e = 0;
+		} else if (errno) {
+			d_err += ":";
+			d_err += strerror(errno);
+		}
+		errno = 0;
+		return r;
+	}
+
+
 
 public:
-	pc_wrap(int, int);
+	pc_wrap(const std::string&, int, int);
 
-	int init(unsigned char *, unsigned char *, bool);
+	int init(const std::string&, const std::string&, bool);
 
 	int reset();
 
@@ -85,11 +105,12 @@ public:
 
 	const char *why();
 
-	void enable_crypto() { seen_starttls = 1; }
+	int enable_crypto();
 
-	bool is_crypted() { return seen_starttls; }
+	bool is_crypted() { return d_seen_starttls; }
 };
 
+}
 
 #endif
 

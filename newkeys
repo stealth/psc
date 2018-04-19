@@ -1,0 +1,7 @@
+#!/bin/sh
+
+umask 077
+openssl genrsa -out key.pem 4096
+openssl req -new -x509 -nodes -sha1 -key key.pem -out cert.pem
+#openssl x509 -in key.pub -pubkey -noout
+

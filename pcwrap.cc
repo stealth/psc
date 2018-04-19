@@ -20,8 +20,9 @@
 
 #include <sys/types.h>
 #include <cstdio>
-#include <string.h>
+#include <cstring>
 #include <string>
+#include <memory>
 #include <errno.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -31,131 +32,117 @@
 
 #include "pcwrap.h"
 #include "misc.h"
-#include "rc4.h"
+#include "bio.h"
 
-#ifdef USE_SSL
-#include <openssl/evp.h>
-#endif
+extern "C" {
+#include <openssl/err.h>
+#include <openssl/ssl.h>
+#include <openssl/bio.h>
+}
 
 using namespace std;
 
+namespace ns_psc {
 
-pc_wrap::pc_wrap(int rfd, int wfd)
-	: r_fd(rfd), w_fd(wfd), seen_starttls(0),
-	  marker("*"), err(""), recent(""), starttls(STARTTLS), r_stream(NULL), w_stream(NULL),
-	  server_mode(0), rc4_k1(NULL), rc4_k2(NULL), wsize_signalled(0)
+
+pc_wrap::pc_wrap(const string &me, int rfd, int wfd)
+	: d_rfd(rfd), d_wfd(wfd)
 {
-	if ((r_stream = fdopen(r_fd, "r")) == NULL)
-		die("pc_wrap::pc_wrap::fdopen(r)");
-	if ((w_stream = fdopen(w_fd, "w")) == NULL)
-		die("pc_wrap::pc_wrap::fdopen(w)");
-	setbuffer(r_stream, NULL, 0);
-	setbuffer(w_stream, NULL, 0);
+	d_me = me;
 
-#ifdef USE_SSL
-	memset(w_key, 0, sizeof(w_key));
-	memset(r_key, 0, sizeof(r_key));
-	memset(w_iv, 'W', sizeof(w_iv));
-	memset(r_iv, 'R', sizeof(r_iv));
-#endif
-
-	seq = 0;
+	SSL_library_init();
+	SSL_load_error_strings();
+	OpenSSL_add_all_algorithms();
+	OpenSSL_add_all_digests();
 }
 
 
-int pc_wrap::init(unsigned char *k1, unsigned char *k2, bool s)
+int pc_wrap::init(const string &cert, const string &key, bool rem)
 {
-	tcgetattr(r_fd, &old_client_tattr);
+	tcgetattr(d_rfd, &d_old_client_tattr);
 
-	rc4_k1 = (unsigned char*)strdup((char*)k1);
-	rc4_k2 = (unsigned char*)strdup((char*)k2);
+	d_is_remote = rem;
 
-	prepare_key(rc4_k1, strlen((char*)rc4_k1), &rc4_read_key);
-	prepare_key(rc4_k2, strlen((char*)rc4_k2), &rc4_write_key);
+	if (!(d_bio_rfd = BIO_new_fd(d_rfd, BIO_NOCLOSE)))
+		return build_error("init::BIO_new_fd", -1);
+	if (!(d_bio_wfd = BIO_new_fd(d_wfd, BIO_NOCLOSE)))
+		return build_error("init::BIO_new_fd", -1);
 
-	server_mode = s;
+	if (!(d_rbio_b64 = BIO_new(ns_psc::BIO_f_b64())))
+		return build_error("init::BIO_new", -1);
+	if (!(d_wbio_b64 = BIO_new(ns_psc::BIO_f_b64())))
+		return build_error("init::BIO_new", -1);
 
-#ifdef USE_SSL
-	err = "pc_wrap::init: Initializing crypto CTX failed.";
+	BIO_push(d_rbio_b64, d_bio_rfd);
+	BIO_push(d_wbio_b64, d_bio_wfd);
 
-#if (OPENSSL_VERSION_NUMBER < 0x10100000L)
-	r_ctx = reinterpret_cast<EVP_CIPHER_CTX *>(new (nothrow) char[sizeof(EVP_CIPHER_CTX)]);
-	w_ctx = reinterpret_cast<EVP_CIPHER_CTX *>(new (nothrow) char[sizeof(EVP_CIPHER_CTX)]);
-	if (!r_ctx || !w_ctx)
-		return -1;
+	if (d_is_remote) {
+		if (!(d_ssl_method = TLS_client_method()))
+			return build_error("init::SSLv23_client_method", -1);
+	} else {
+		if (!(d_ssl_method = TLS_server_method()))
+			return build_error("init::SSLv23_server_method", -1);
+	}
 
-	EVP_CIPHER_CTX_init(r_ctx);
-	EVP_CIPHER_CTX_init(w_ctx);
-#else
-	r_ctx = EVP_CIPHER_CTX_new();
-	w_ctx = EVP_CIPHER_CTX_new();
-	if (!r_ctx || !w_ctx)
-		return -1;
+	if (!(d_ssl_ctx = SSL_CTX_new(d_ssl_method)))
+		return build_error("init::SSL_CTX_new", -1);
+
+	if (cert.size()) {
+		if (SSL_CTX_use_certificate_file(d_ssl_ctx, cert.c_str(), SSL_FILETYPE_PEM) != 1)
+			return build_error("init::SSL_CTX_use_certificate", -1);
+	}
+
+	if (key.size()) {
+		if (SSL_CTX_use_PrivateKey_file(d_ssl_ctx, key.c_str(), SSL_FILETYPE_PEM) != 1)
+			return build_error("init::SSL_CTX_use_PrivateKey_file", -1);
+	}
+
+	long op = SSL_OP_NO_SSLv2|SSL_OP_NO_SSLv3|SSL_OP_NO_TLSv1|SSL_OP_NO_TLSv1_1;
+	//op |= (SSL_OP_SINGLE_DH_USE|SSL_OP_SINGLE_ECDH_USE|SSL_OP_NO_TICKET);
+
+#ifdef SSL_OP_NO_COMPRESSION
+	op |= SSL_OP_NO_COMPRESSION;
 #endif
 
-	if (EVP_EncryptInit(w_ctx, EVP_bf_ofb(), NULL, w_iv) != 1)
-		return -1;
-	if (EVP_DecryptInit(r_ctx, EVP_bf_ofb(), NULL, r_iv) != 1)
-		return -1;
+	if ((unsigned long)(SSL_CTX_set_options(d_ssl_ctx, op) & op) != (unsigned long)op)
+		return build_error("init::SSL_CTX_set_options", -1);
 
-	if (EVP_CIPHER_CTX_set_key_length(r_ctx, strlen((char *)rc4_k1)) != 1)
-		return -1;
-	if (EVP_CIPHER_CTX_set_key_length(w_ctx, strlen((char *)rc4_k2)) != 1)
-		return -1;
+	if (d_ciphers.size() > 0 && SSL_CTX_set_cipher_list(d_ssl_ctx, d_ciphers.c_str()) != 1)
+		return build_error("init::SSL_CTX_set_cipher_list", -1);
 
-	if (EVP_EncryptInit(w_ctx, EVP_bf_ofb(), w_key, NULL) != 1)
-		return -1;
-	if (EVP_DecryptInit(r_ctx, EVP_bf_ofb(), r_key, NULL) != 1)
-		return -1;
-#endif
 	return 0;
 }
 
 
 int pc_wrap::reset()
 {
-	seen_starttls = 0;
 
-	// rc4 state machine reset
-	prepare_key(rc4_k1, strlen((char*)rc4_k1), &rc4_read_key);
-	prepare_key(rc4_k2, strlen((char*)rc4_k2), &rc4_write_key);
+	SSL_free(d_ssl); d_ssl = nullptr;
 
-#ifdef USE_SSL
+	// freed via SSL_free()
+	d_rbio_b64 = nullptr;
+	d_wbio_b64 = nullptr;
 
-	err = "pc_wrap::reset: Resetting crypto CTX failed.";
+	d_bio_rfd = nullptr;
+	d_bio_wfd = nullptr;
 
-#if (OPENSSL_VERSION_NUMBER < 0x10100000L)
-	EVP_CIPHER_CTX_cleanup(r_ctx);
-	EVP_CIPHER_CTX_cleanup(w_ctx);
+	d_seen_starttls = 0;
 
-	EVP_CIPHER_CTX_init(r_ctx);
-	EVP_CIPHER_CTX_init(w_ctx);
-#else
+	if (!d_is_remote)
+		tcsetattr(d_rfd, TCSANOW, &d_old_client_tattr);
 
-	EVP_CIPHER_CTX_reset(r_ctx);
-	EVP_CIPHER_CTX_reset(w_ctx);
-#endif
+	if (!(d_bio_rfd = BIO_new_fd(d_rfd, BIO_NOCLOSE)))
+		return build_error("reset:BIO_new_fd", -1);
+	if (!(d_bio_wfd = BIO_new_fd(d_wfd, BIO_NOCLOSE)))
+		return build_error("reset:BIO_new_fd", -1);
 
-	if (EVP_EncryptInit(w_ctx, EVP_bf_ofb(), NULL, w_iv) != 1)
-		return -1;
-	if (EVP_DecryptInit(r_ctx, EVP_bf_ofb(), NULL, r_iv) != 1)
-		return -1;
+	if (!(d_rbio_b64 = BIO_new(ns_psc::BIO_f_b64())))
+		return build_error("reset:BIO_new", -1);
+	if (!(d_wbio_b64 = BIO_new(ns_psc::BIO_f_b64())))
+		return build_error("reset:BIO_new", -1);
 
-	if (EVP_CIPHER_CTX_set_key_length(r_ctx, strlen((char *)rc4_k1)) != 1)
-		return -1;
-	if (EVP_CIPHER_CTX_set_key_length(w_ctx, strlen((char *)rc4_k2)) != 1)
-		return -1;
-
-	if (EVP_EncryptInit(w_ctx, EVP_bf_ofb(), w_key, NULL) != 1)
-		return -1;
-	if (EVP_DecryptInit(r_ctx, EVP_bf_ofb(), r_key, NULL) != 1)
-		return -1;
-#endif
-
-	seq = 0;
-
-	if (!server_mode)
-		tcsetattr(r_fd, TCSANOW, &old_client_tattr);
+	BIO_push(d_rbio_b64, d_bio_rfd);
+	BIO_push(d_wbio_b64, d_bio_wfd);
 
 	return 0;
 }
@@ -163,133 +150,74 @@ int pc_wrap::reset()
 
 pc_wrap::~pc_wrap()
 {
-	fclose(r_stream);
-	fclose(w_stream);
-	free(rc4_k1);
-	free(rc4_k2);
-
-#ifdef USE_SSL
-
-#if (OPENSSL_VERSION_NUMBER < 0x10100000L)
-	EVP_CIPHER_CTX_cleanup(r_ctx);
-	EVP_CIPHER_CTX_cleanup(w_ctx);
-
-	delete [] r_ctx;
-	delete [] w_ctx;
-#else
-	EVP_CIPHER_CTX_free(r_ctx);
-	EVP_CIPHER_CTX_free(w_ctx);
-
-#endif
-#endif
-
+	SSL_CTX_free(d_ssl_ctx);
 }
 
 
 int pc_wrap::check_wsize(int fd)
 {
-	if (!wsize_signalled)
+	if (!d_wsize_signalled)
 		return 0;
-	wsize_signalled = 0;
-	int r = ioctl(fd, TIOCSWINSZ, &ws);
+	d_wsize_signalled = 0;
+	int r = ioctl(fd, TIOCSWINSZ, &d_ws);
 	if (r == 0)
 		return 1;
 	return r;
 }
 
 
-string pc_wrap::decrypt(char *buf, int len)
+
+int pc_wrap::enable_crypto()
 {
-	string result = "";
-	if (len <= 0)
-		return result;
-#ifndef USE_SSL
-	rc4((unsigned char*)buf, len, &rc4_read_key);
-	result.assign(buf, len);
-#else
-	int olen = 0;
-	char *obuf = new (nothrow) char[2*len + EVP_MAX_BLOCK_LENGTH];
-	if (!obuf)
-		return result;
-	EVP_DecryptUpdate(r_ctx, (unsigned char *)obuf, &olen, (unsigned char *)buf, len);
-	result.assign(obuf, olen);
-	delete [] obuf;
-#endif
-	++seq;
-	return result;
-}
+	int r = 0;
 
+	if (!(d_ssl = SSL_new(d_ssl_ctx)))
+		return build_error("enable_crypto::SSL_new", -1);
 
-string pc_wrap::encrypt(char *buf, int len)
-{
-	string result = "";
-	if (len <= 0)
-		return result;
+	SSL_set0_rbio(d_ssl, d_rbio_b64);
+	SSL_set0_wbio(d_ssl, d_wbio_b64);
 
-#ifndef USE_SSL
-	rc4((unsigned char*)buf, len, &rc4_write_key);
-	result.assign(buf, len);
-#else
-	int olen = 0;
-	char *obuf = new (nothrow) char[2*len + EVP_MAX_BLOCK_LENGTH];
-	if (!obuf)
-		return result;
-	EVP_EncryptUpdate(w_ctx, (unsigned char *)obuf, &olen, (unsigned char *)buf, len);
-	result.assign(obuf, olen);
-	delete [] obuf;
-#endif
-	++seq;
-	return result;
+	do {
+		r = SSL_connect(d_ssl);
+		d_ssl_e = ERR_peek_error();
+		switch (SSL_get_error(d_ssl, r)) {
+		case SSL_ERROR_NONE:
+			d_seen_starttls = 1;
+			break;
+		// not ready yet? try later
+		case SSL_ERROR_WANT_READ:
+		case SSL_ERROR_WANT_WRITE:
+			continue;
+		default:
+			return build_error("read::SSL_connect", -1);
+		}
+	} while (!d_seen_starttls);
+
+	d_seen_starttls = 1;
+
+	return 0;
 }
 
 
 int pc_wrap::read(char *buf, size_t blen)
 {
 	ssize_t r;
-	size_t ur;
-	char b64_crypt_buf[2*BLOCK_SIZE], esc = 0;
-	char *s = NULL;
 
-	if (blen < 3*sizeof(b64_crypt_buf)/4 || blen < sizeof(esc)) {
-		err = "pc_wrap::read: input buffer too small";
-		return -1;
-	}
-	memset(b64_crypt_buf, 0, sizeof(b64_crypt_buf));
-
-	if (seen_starttls) {
-		// peek into stream to find potential ESC sequences
-		if ((ur = fread(&esc, 1, 1, r_stream)) == 0) {
-			err = "pc_wrap::read: invalid fread!\n";
-			return -1;
+	if (d_seen_starttls) {
+		retry: r = SSL_read(d_ssl, buf, blen);
+		d_ssl_e = ERR_peek_error();
+		switch (SSL_get_error(d_ssl, r)) {
+		case SSL_ERROR_NONE:
+			break;
+		// not ready yet? try later
+		case SSL_ERROR_WANT_READ:
+		case SSL_ERROR_WANT_WRITE:
+			goto retry;
+		default:
+			return build_error("read::SSL_read", -1);
 		}
 
-		// marker found?
-		if (marker[0] == esc) {
-			ungetc(esc, r_stream);
-			fgets(b64_crypt_buf, sizeof(b64_crypt_buf), r_stream);
-		} else {
-			if (!server_mode)
-				printf("psc: invalid character, ignoring\n");
-			return 0;
-		}
-
-		// when here, we have a valid b64 encoded crypted string
-
-		if ((s = strchr(b64_crypt_buf, '\n')) == NULL) {
-			err = "pc_wrap::read: No newline in b64 rstream!";
-			return -1;
-		}
-
-		*s = 0;
-		char *tbuf = new (nothrow) char[sizeof(b64_crypt_buf)];
-		if (!tbuf) {
-			err = "pc_wrap::read: OOM";
-			return -1;
-		}
-		memset(tbuf, 0, sizeof(b64_crypt_buf));
-		r = b64_decode(b64_crypt_buf + marker.size(), (unsigned char*)tbuf);
-		string s = decrypt(tbuf, r);
-		delete [] tbuf;
+		string s = string(buf, r);
 
 		// normal data?
 		if (s.find("D:channel0:") == 0) {
@@ -297,61 +225,77 @@ int pc_wrap::read(char *buf, size_t blen)
 			return s.size() - 11;
 		// some command
 		} else if (s.find("C:window-size:") == 0) {
-			wsize_signalled = 1;
-			if (sscanf(s.c_str() + 14, "%hu:%hu:%hu:%hu", &ws.ws_row, &ws.ws_col,
-			           &ws.ws_xpixel, &ws.ws_ypixel) != 4)
-				wsize_signalled = 0;
+			d_wsize_signalled = 1;
+			if (sscanf(s.c_str() + 14, "%hu:%hu:%hu:%hu", &d_ws.ws_row, &d_ws.ws_col,
+			           &d_ws.ws_xpixel, &d_ws.ws_ypixel) != 4)
+				d_wsize_signalled = 0;
 		} else if (s.find("C:exit:") == 0) {
 			// psc-remote is quitting, reset crypto state
 			if (this->reset() < 0)
 				return -1;
 			printf("psc: Seen end-sequence, disabling crypto!\r\n");
-			return 0;
 		}
 
 		return 0;
 	}
 
-	r = ::read(r_fd, buf, 1);
-	if (r != 1) {
-		err = "pc_wrap::read::";
-		err += strerror(errno);
-		return -1;
-	}
+	r = ::read(d_rfd, buf, 1);
+	if (r <= 0)
+		return build_error("read::read", -1);
 
 	// as slow links read output one-bye-one or in small chunks, we need
 	// to slide-match STARTTLS sequence
-	recent += buf[0];
-	string::size_type i = recent.find(starttls);
-	if (i != string::npos) {
-		fflush(r_stream);
-
+	d_recent += buf[0];
+	string::size_type i = d_recent.find(d_starttls);
+	if (i != string::npos && !d_is_remote) {
 		if (i > 0 && i < blen)
-			memcpy(buf, recent.c_str(), i);
+			memcpy(buf, d_recent.c_str(), i);
 		else
 			i = 0;
 
-		recent = "";
+		d_recent = "";
 		printf("psc: Seen STARTTLS sequence, enabling crypto.\r\n");
-		seen_starttls = 1;
-		if (!server_mode) {
-			// Disable local echo now, since remote site is
-			// opening another PTY with echo
-			struct termios tattr;
-			if (tcgetattr(r_fd, &tattr) == 0) {
-				cfmakeraw(&tattr);
-				tattr.c_cc[VMIN] = 1;
-				tattr.c_cc[VTIME] = 0;
-				tcsetattr(r_fd, TCSANOW, &tattr);
+
+		if (!(d_ssl = SSL_new(d_ssl_ctx)))
+			return build_error("read::SSL_new", -1);
+		SSL_set0_rbio(d_ssl, d_rbio_b64);
+		SSL_set0_wbio(d_ssl, d_wbio_b64);
+
+		d_seen_starttls = 0;
+
+		do {
+			r = SSL_accept(d_ssl);
+			d_ssl_e = ERR_peek_error();
+			switch (SSL_get_error(d_ssl, r)) {
+			case SSL_ERROR_NONE:
+				d_seen_starttls = 1;
+				break;
+			// not ready yet? try later
+			case SSL_ERROR_WANT_READ:
+			case SSL_ERROR_WANT_WRITE:
+				continue;
+			default:
+				return build_error("read::SSL_accept", -1);
 			}
-			write_wsize();
+		} while (!d_seen_starttls);
+
+		// Disable local echo now, since remote site is
+		// opening another PTY with echo
+		struct termios tattr;
+		if (tcgetattr(d_rfd, &tattr) == 0) {
+			cfmakeraw(&tattr);
+			tattr.c_cc[VMIN] = 1;
+			tattr.c_cc[VTIME] = 0;
+			tcsetattr(d_rfd, TCSANOW, &tattr);
 		}
+
+		write_wsize();
 		return i;
 	}
 
-	string::size_type nl = recent.find_last_of('\n');
-	if (nl != string::npos && nl + 1 < recent.size())
-		recent = recent.substr(nl + 1);
+	string::size_type nl = d_recent.find_last_of('\n');
+	if (nl != string::npos && nl + 1 < d_recent.size())
+		d_recent.erase(0, nl + 1);
 
 	return r;
 }
@@ -359,19 +303,30 @@ int pc_wrap::read(char *buf, size_t blen)
 
 int pc_wrap::write_cmd(const char *buf)
 {
-	if (!seen_starttls)
+	if (!d_seen_starttls)
 		return 0;
 
-	char cmd_buf[256];
-	unsigned char cbuf[512];
-	memset(cmd_buf, 0, sizeof(cmd_buf));
-	memset(cbuf, 0, sizeof(cbuf));
-	snprintf(cmd_buf, sizeof(cmd_buf), "C:%s:", buf);
-	string s = encrypt(cmd_buf, strlen(cmd_buf));
-	b64_encode(s.c_str(), s.size(), cbuf);
-	fprintf(w_stream, "%s%s\n", marker.c_str(), cbuf);
-	return 0;
+	int r = 0;
+	char cmd_buf[256] = {0};
+	if (snprintf(cmd_buf, sizeof(cmd_buf) - 1, "C:%s:", buf) >= (int)sizeof(cmd_buf))
+		return build_error("write_cmd: Too large buffer.", -1);
 
+	// as we dont have SSL_MODE_ENABLE_PARTIAL_WRITES set,
+	// this will write the entire buffer, i.e. it slurps away
+	// blen bytes
+	retry: r = SSL_write(d_ssl, cmd_buf, strlen(cmd_buf));
+	d_ssl_e = ERR_peek_error();
+	switch (SSL_get_error(d_ssl, r)) {
+	case SSL_ERROR_NONE:
+		break;
+	// not ready yet? try later
+	case SSL_ERROR_WANT_READ:
+	case SSL_ERROR_WANT_WRITE:
+		goto retry;
+	default:
+		return build_error("write_cmd::SSL_write", -1);
+	}
+	return 0;
 }
 
 
@@ -379,68 +334,72 @@ int pc_wrap::write(const void *buf, size_t blen)
 {
 	int r = 0;
 
-	if (blen > BLOCK_SIZE) {
-		err = "pc_wrap::write: too large buffer!\n";
-		return -1;
-	}
+	if (blen > BLOCK_SIZE)
+		return build_error("write: too large buffer!\n", -1);
 
-	char *crypt_buf = NULL;
-	unsigned char *b64_crypt_buf = NULL;
+	if (d_seen_starttls) {
+		unique_ptr<char[]> cbuf(new (nothrow) char[blen + 128]);
+		if (!cbuf.get())
+			return build_error("write: OOM", -1);
 
-	if (seen_starttls) {
-		crypt_buf = new (nothrow) char[blen + 32];
-		if (!crypt_buf)
-			return -1;
-
-		snprintf(crypt_buf, 32, "D:channel0:");
-		memcpy(crypt_buf + 11, buf, blen);
+		snprintf(cbuf.get(), 32, "D:channel0:");
+		memcpy(cbuf.get() + 11, buf, blen);
 		blen += 11;
-		string s = encrypt(crypt_buf, (int)blen);
-		b64_crypt_buf = new (nothrow) unsigned char[2*s.size() + 64];
-		if (!b64_crypt_buf)
-			return -1;
-		memset(b64_crypt_buf, 0, 2*s.size() + 64);
-		b64_encode(s.c_str(), s.size(), b64_crypt_buf);
-		fprintf(w_stream, "%s%s\n", marker.c_str(), b64_crypt_buf);
 
-		delete [] crypt_buf;
-		delete [] b64_crypt_buf;
-		return blen - 11;
+		// as we dont have SSL_MODE_ENABLE_PARTIAL_WRITES set,
+		// this will write the entire buffer, i.e. it slurps away
+		// blen bytes
+		retry: r = SSL_write(d_ssl, cbuf.get(), blen);
+		d_ssl_e = ERR_peek_error();
+		switch (SSL_get_error(d_ssl, r)) {
+		case SSL_ERROR_NONE:
+			break;
+		// not ready yet? try later
+		case SSL_ERROR_WANT_READ:
+		case SSL_ERROR_WANT_WRITE:
+			goto retry;
+		default:
+			return build_error("write::SSL_write", -1);
+		}
+
+		return r;
 	}
-	r = ::write(w_fd, buf, blen);
+
+	r = ::write(d_wfd, buf, blen);
 	return r;
 }
 
 
 int pc_wrap::write_wsize()
 {
-	if (!seen_starttls)
+	if (!d_seen_starttls)
 		return 0;
 
-	char wsbuf[64];
-	if (ioctl(0, TIOCGWINSZ, &ws) < 0)
+	char wsbuf[64] = {0};
+	if (ioctl(0, TIOCGWINSZ, &d_ws) < 0)
 		return -1;
-	memset(wsbuf, 0, sizeof(wsbuf));
-	snprintf(wsbuf, sizeof(wsbuf), "window-size:%hu:%hu:%hu:%hu", ws.ws_row,
-	         ws.ws_col, ws.ws_xpixel, ws.ws_ypixel);
+	snprintf(wsbuf, sizeof(wsbuf), "window-size:%hu:%hu:%hu:%hu", d_ws.ws_row,
+	         d_ws.ws_col, d_ws.ws_xpixel, d_ws.ws_ypixel);
 	return write_cmd(wsbuf);
 }
 
 
 int pc_wrap::r_fileno()
 {
-	return r_fd;
+	return d_rfd;
 }
 
 
 int pc_wrap::w_fileno()
 {
-	return w_fd;
+	return d_wfd;
 }
 
 
 const char *pc_wrap::why()
 {
-	return err.c_str();
+	return d_err.c_str();
+}
+
 }
 
