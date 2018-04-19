@@ -61,7 +61,7 @@ int main(int argc, char **argv)
 	struct termios tattr;
 	const char *starttls = STARTTLS;
 
-	string certfile = "./cert.pem";
+	string certfile = "";
 	if (argc == 2)
 		certfile = argv[1];
 
@@ -119,7 +119,7 @@ int main(int argc, char **argv)
 	close(pt.slave());
 
 	pc_wrap psc("remote", 0, 1);
-	if (psc.init("", "", 1) < 0)
+	if (psc.init(certfile, "", 1) < 0)
 		die(psc.why());
 
 	printf("%s", starttls);
