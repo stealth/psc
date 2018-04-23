@@ -60,8 +60,6 @@ pc_wrap::pc_wrap(const string &me, int rfd, int wfd)
 
 int pc_wrap::init(const string &cert, const string &key, bool rem)
 {
-	tcgetattr(d_rfd, &d_old_client_tattr);
-
 	d_is_remote = rem;
 
 	if (!(d_bio_rfd = BIO_new_fd(d_rfd, BIO_NOCLOSE)))
@@ -141,9 +139,6 @@ int pc_wrap::reset()
 	d_bio_wfd = nullptr;
 
 	d_seen_starttls = 0;
-
-	if (!d_is_remote)
-		tcsetattr(d_rfd, TCSANOW, &d_old_client_tattr);
 
 	if (!(d_bio_rfd = BIO_new_fd(d_rfd, BIO_NOCLOSE)))
 		return build_error("reset:BIO_new_fd", -1);

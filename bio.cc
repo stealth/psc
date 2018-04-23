@@ -42,11 +42,17 @@ int b64_write(BIO *b, const char *buf, int blen)
 	string b64 = "";
 
 	BIO *next = BIO_next(b);
-	int n = blen > 1024 ? 1024 : blen;
+	int n = blen > 1024 ? 1024 : blen, r = 0;
 	string s = string(buf, n);
 	b64_encode(s, b64);
 	b64 += "\n";
-	BIO_write(next, b64.c_str(), b64.size());
+
+	do {
+		if ((r = BIO_write(next, b64.c_str(), b64.size())) <= 0)
+			return r;
+		b64.erase(0, r);
+	} while (!b64.empty());
+
 	return n;
 }
 
@@ -132,6 +138,20 @@ int b64_read_new(BIO *b, char *data, size_t datal, size_t *readbytes)
 long b64_ctrl(BIO *b, int cmd, long num, void *ptr)
 {
 	BIO *next = BIO_next(b);
+	b64_ctx *ctx = reinterpret_cast<b64_ctx *>(BIO_get_data(b));
+
+	switch (cmd) {
+	case BIO_CTRL_RESET:
+	case BIO_CTRL_FLUSH:
+		ctx->input.clear();
+		break;
+	case BIO_CTRL_PENDING:
+		if (!ctx->input.empty())
+			return 1;
+	default:
+		break;
+	}
+
 	return BIO_ctrl(next, cmd, num, ptr);
 }
 

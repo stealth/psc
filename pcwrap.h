@@ -44,10 +44,9 @@ private:
 
 	std::string d_ciphers{"!LOW:!EXP:!MD5:!CAMELLIA:!RC4:!MEDIUM:!DES:!ADH:!3DES:AES256:AESGCM:SHA256:SHA384:@STRENGTH"};
 	int d_rfd{-1}, d_wfd{-1};
-	bool d_seen_starttls{0};
+	bool d_seen_starttls{0}, d_was_ssl_error{0};
 	std::string d_err{""}, d_recent{""}, d_starttls{STARTTLS}, d_me{""};
 	bool d_is_remote{0};
-	struct termios d_old_client_tattr;
 	struct winsize d_ws;
 	bool d_wsize_signalled{0};
 
@@ -63,6 +62,7 @@ private:
 	{
 		unsigned long e = 0;
 
+		d_was_ssl_error = 0;
 		d_err = d_me + "::pcwrap::";
 		d_err += msg;
 		if ((e = ERR_get_error()) || d_ssl_e) {
@@ -72,6 +72,7 @@ private:
 			d_err += ERR_error_string(e, nullptr);
 			ERR_clear_error();
 			d_ssl_e = 0;
+			d_was_ssl_error = 1;
 		} else if (errno) {
 			d_err += ":";
 			d_err += strerror(errno);
@@ -110,6 +111,8 @@ public:
 	int enable_crypto();
 
 	bool is_crypted() { return d_seen_starttls; }
+
+	bool ssl_error() { return d_was_ssl_error; }
 };
 
 }

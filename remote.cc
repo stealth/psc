@@ -163,10 +163,13 @@ int main(int argc, char **argv)
 		}
 	}
 
-	if (exit_attr_set)
-		tcsetattr(fileno(stdin), TCSANOW, &exit_tattr);
-
 	psc.write_cmd("exit");
+
+	if (exit_attr_set) {
+		if (tcsetattr(fileno(stdin), TCSANOW, &exit_tattr) < 0)
+			perror("tcsetattr");
+	}
+
 	return 0;
 }
 

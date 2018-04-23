@@ -185,15 +185,30 @@ int main(int argc, char **argv)
 			if (psc->write(wbuf, r) <= 0) {
 				if (errno == EINTR)
 					continue;
-				else
+				else {
+					if (psc->ssl_error()) {
+						fprintf(stderr, "%s\n", psc->why());
+						if (psc->reset() < 0)
+							die(psc->why());
+						continue;
+					}
 					die(psc->why());
+				}
 			}
 		} else if (FD_ISSET(pt.master(), &rset)) {
 			if ((r = psc->read(rbuf, sizeof(rbuf))) < 0) {
 				if (errno == EINTR)
 					continue;
-				else
+				else {
+					// reset on SSL errors
+					if (psc->ssl_error()) {
+						fprintf(stderr, "%s\n", psc->why());
+						if (psc->reset() < 0)
+							die(psc->why());
+						continue;
+					}
 					die(psc->why());
+				}
 			}
 			// STARTTLS/end-sequence seen
 			if (r == 0)
