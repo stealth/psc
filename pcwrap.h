@@ -45,7 +45,6 @@ private:
 	rc4_key rc4_read_key, rc4_write_key;
 	bool server_mode;
 	unsigned char *rc4_k1, *rc4_k2;
-	struct termios old_client_tattr;
 	struct winsize ws;
 	bool wsize_signalled;
 	uint32_t seq;

@@ -65,8 +65,6 @@ pc_wrap::pc_wrap(int rfd, int wfd)
 
 int pc_wrap::init(unsigned char *k1, unsigned char *k2, bool s)
 {
-	tcgetattr(r_fd, &old_client_tattr);
-
 	rc4_k1 = (unsigned char*)strdup((char*)k1);
 	rc4_k2 = (unsigned char*)strdup((char*)k2);
 
@@ -153,10 +151,6 @@ int pc_wrap::reset()
 #endif
 
 	seq = 0;
-
-	if (!server_mode)
-		tcsetattr(r_fd, TCSANOW, &old_client_tattr);
-
 	return 0;
 }
 
