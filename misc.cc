@@ -38,7 +38,11 @@ namespace ns_psc {
 
 void die(const char *s)
 {
-	fprintf(stderr, "[%d] %s: %s\n", getpid(), s, strerror(errno));
+	char s_errno[256] = {0};
+	if (errno)
+		snprintf(s_errno, sizeof(s_errno) - 1, ":%s", strerror(errno));
+
+	fprintf(stderr, "[%d] %s%s\n", getpid(), s, s_errno);
 	tcsetattr(0, TCSANOW, &exit_tattr);
 	exit(errno);
 }

@@ -1,7 +1,7 @@
 /*
  * This file is part of port shell crypter (psc).
  *
- * (C) 2006-2013 by Sebastian Krahmer,
+ * (C) 2006-2018 by Sebastian Krahmer,
  *                  sebastian [dot] krahmer [at] gmail [dot] com
  *
  * psc is free software: you can redistribute it and/or modify
@@ -129,6 +129,9 @@ int main(int argc, char **argv)
 		die(psc.why());
 	}
 
+	if (psc.write_cmd("want-wsize") < 0)
+		die(psc.why());
+
 	for (;;) {
 		FD_ZERO(&rset);
 		FD_SET(pt.master(), &rset);
@@ -146,7 +149,7 @@ int main(int argc, char **argv)
 		if (FD_ISSET(0, &rset)) {
 			if ((r = psc.read(rbuf, sizeof(rbuf))) < 0)
 				break;
-			// STARTTLS/command seen
+			// command seen
 			if (r == 0) {
 				psc.check_wsize(pt.master());
 				continue;

@@ -248,6 +248,8 @@ int pc_wrap::read(char *buf, size_t blen)
 			if (sscanf(s.c_str() + 14, "%hu:%hu:%hu:%hu", &d_ws.ws_row, &d_ws.ws_col,
 			           &d_ws.ws_xpixel, &d_ws.ws_ypixel) != 4)
 				d_wsize_signalled = 0;
+		} else if (s.find("C:want-wsize:") == 0) {
+			write_wsize();
 		} else if (s.find("C:exit:") == 0) {
 			// psc-remote is quitting, reset crypto state
 			if (this->reset() < 0)
@@ -308,7 +310,6 @@ int pc_wrap::read(char *buf, size_t blen)
 			tcsetattr(d_rfd, TCSANOW, &tattr);
 		}
 
-		write_wsize();
 		return i;
 	}
 
