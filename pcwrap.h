@@ -49,6 +49,7 @@ private:
 	bool d_is_remote{0};
 	struct winsize d_ws;
 	bool d_wsize_signalled{0};
+	termios d_saved_rfd_tattr;
 
 	SSL_CTX *d_ssl_ctx{nullptr};
 	const SSL_METHOD *d_ssl_method{nullptr};

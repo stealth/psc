@@ -140,6 +140,9 @@ int pc_wrap::reset()
 
 	d_seen_starttls = 0;
 
+	if (!d_is_remote)
+		tcsetattr(d_rfd, TCSANOW, &d_saved_rfd_tattr);
+
 	if (!(d_bio_rfd = BIO_new_fd(d_rfd, BIO_NOCLOSE)))
 		return build_error("reset:BIO_new_fd", -1);
 	if (!(d_bio_wfd = BIO_new_fd(d_wfd, BIO_NOCLOSE)))
@@ -286,6 +289,7 @@ int pc_wrap::read(char *buf, size_t blen)
 		// opening another PTY with echo
 		struct termios tattr;
 		if (tcgetattr(d_rfd, &tattr) == 0) {
+			d_saved_rfd_tattr = tattr;
 			cfmakeraw(&tattr);
 			tattr.c_cc[VMIN] = 1;
 			tattr.c_cc[VTIME] = 0;
