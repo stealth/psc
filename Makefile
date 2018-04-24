@@ -2,9 +2,8 @@
 
 CC=cc
 CXX=c++
-DEFS=-DUSE_SSL
-CFLAGS=-c -Wall -O2 -DPSC_READ_KEY=\"abcd1234\" -DPSC_WRITE_KEY=\"abcd5678\"\
-	-DSTARTTLS=\"psc-2013-STARTTLS\" -ansi -pedantic $(DEFS)
+DEFS=
+CFLAGS=-c -Wall -O2 -DPSC_READ_KEY=\"abcd1234\" -DPSC_WRITE_KEY=\"abcd5678\" -std=c++11 -pedantic $(DEFS)
 CFLAGS+=-DHAVE_UNIX98
 
 all: psc-local psc-remote
@@ -12,11 +11,11 @@ all: psc-local psc-remote
 clean:
 	rm -f *.o
 
-psc-local: rc4.o misc.o client.o pcwrap.o pty.o pty98.o
-	$(CXX) rc4.o misc.o pcwrap.o client.o pty.o pty98.o -o psc-local -lcrypto
+psc-local: misc.o client.o pcwrap.o pty.o pty98.o
+	$(CXX) misc.o pcwrap.o client.o pty.o pty98.o -o psc-local -lcrypto
 
-psc-remote: rc4.o misc.o server.o pty.o pty98.o pcwrap.o
-	$(CXX) rc4.o misc.o server.o pty.o pty98.o pcwrap.o -o psc-remote -lcrypto
+psc-remote: misc.o server.o pty.o pty98.o pcwrap.o
+	$(CXX) misc.o server.o pty.o pty98.o pcwrap.o -o psc-remote -lcrypto
 
 pcwrap.o: pcwrap.cc
 	$(CXX) $(CFLAGS) pcwrap.cc
@@ -26,9 +25,6 @@ client.o: client.cc
 
 server.o: server.cc
 	$(CXX) $(CFLAGS) server.cc
-
-rc4.o: rc4.c
-	$(CC) $(CFLAGS) rc4.c
 
 misc.o: misc.cc
 	$(CXX) $(CFLAGS) misc.cc

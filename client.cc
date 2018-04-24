@@ -32,7 +32,6 @@
 #include "pty.h"
 #include "pcwrap.h"
 #include "misc.h"
-#include "rc4.h"
 
 
 pc_wrap *psc = NULL;
@@ -79,8 +78,6 @@ int main(int argc, char **argv)
 	int r;
 	char wbuf[BLOCK_SIZE], rbuf[2*BLOCK_SIZE];
 	struct termios tattr;
-	unsigned char *rkey = (unsigned char*)PSC_READ_KEY;
-	unsigned char *wkey = (unsigned char*)PSC_WRITE_KEY;
 
 	struct sigaction sa;
 	memset(&sa, 0, sizeof(sa));
@@ -146,7 +143,7 @@ int main(int argc, char **argv)
 	if (!psc)
 		die("new pc_wrap OOM");
 
-	if (psc->init(rkey, wkey, 0) < 0)
+	if (psc->init(PSC_WRITE_KEY, PSC_READ_KEY, 0) < 0)
 		die(psc->why());
 	close(pt.slave());
 

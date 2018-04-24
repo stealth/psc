@@ -86,7 +86,8 @@ size_t b64_decode(const char *s, unsigned char *buf)
 	return n;
 }
 
-unsigned char *b64_encode(const char *s, size_t len, unsigned char *buf)
+
+char *b64_encode(const char *s, size_t len, unsigned char *buf)
 {
 	int bits = 0;
 	int char_count = 0;
@@ -121,7 +122,7 @@ unsigned char *b64_encode(const char *s, size_t len, unsigned char *buf)
 		}
 	}
 	result[out_cnt] = '\0';	/* terminate */
-	return result;
+	return reinterpret_cast<char *>(result);
 }
 
 

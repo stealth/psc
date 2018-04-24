@@ -22,63 +22,84 @@
 #include <cstdio>
 #include <string.h>
 #include <string>
+#include <memory>
 #include <errno.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <fcntl.h>
 #include <errno.h>
 #include <termios.h>
 #include <sys/ioctl.h>
 
 #include "pcwrap.h"
 #include "misc.h"
-#include "rc4.h"
+#include "deleters.h"
+#include "missing.h"
 
-#ifdef USE_SSL
+extern "C" {
 #include <openssl/evp.h>
-#endif
+#include <openssl/rand.h>
+}
 
 using namespace std;
 
 
 pc_wrap::pc_wrap(int rfd, int wfd)
-	: r_fd(rfd), w_fd(wfd), seen_starttls(0),
-	  marker("*"), err(""), recent(""), starttls(STARTTLS), r_stream(NULL), w_stream(NULL),
-	  server_mode(0), rc4_k1(NULL), rc4_k2(NULL), wsize_signalled(0)
+	: r_fd(rfd), w_fd(wfd)
 {
-	if ((r_stream = fdopen(r_fd, "r")) == NULL)
-		die("pc_wrap::pc_wrap::fdopen(r)");
-	if ((w_stream = fdopen(w_fd, "w")) == NULL)
-		die("pc_wrap::pc_wrap::fdopen(w)");
-	setbuffer(r_stream, NULL, 0);
-	setbuffer(w_stream, NULL, 0);
-
-#ifdef USE_SSL
 	memset(w_key, 0, sizeof(w_key));
 	memset(r_key, 0, sizeof(r_key));
-	memset(w_iv, 'W', sizeof(w_iv));
-	memset(r_iv, 'R', sizeof(r_iv));
-#endif
-
-	seq = 0;
+	memset(iv, 0, sizeof(iv));
 }
 
 
-int pc_wrap::init(unsigned char *k1, unsigned char *k2, bool s)
+static int kdf(const char *secret, int slen, unsigned char key[EVP_MAX_KEY_LENGTH])
 {
-	rc4_k1 = (unsigned char*)strdup((char*)k1);
-	rc4_k2 = (unsigned char*)strdup((char*)k2);
+	unsigned int hlen = 0;
+	unsigned char digest[EVP_MAX_MD_SIZE];	// 64 which matches sha512
 
-	prepare_key(rc4_k1, strlen((char*)rc4_k1), &rc4_read_key);
-	prepare_key(rc4_k2, strlen((char*)rc4_k2), &rc4_write_key);
+	if (slen <= 0)
+		return -1;
+	memset(key, 0xff, EVP_MAX_KEY_LENGTH);
 
+	unique_ptr<EVP_MD_CTX, EVP_MD_CTX_del> md_ctx(EVP_MD_CTX_create(), EVP_MD_CTX_delete);
+	if (!md_ctx.get())
+		return -1;
+	if (EVP_DigestInit_ex(md_ctx.get(), EVP_sha512(), nullptr) != 1)
+		return -1;
+	if (EVP_DigestUpdate(md_ctx.get(), reinterpret_cast<const void *>(secret), slen) != 1)
+		return -1;
+
+	string vs = "v1";
+	if (EVP_DigestUpdate(md_ctx.get(), vs.c_str(), vs.size()) != 1)
+		return -1;
+
+	if (EVP_DigestFinal_ex(md_ctx.get(), digest, &hlen) != 1)
+		return -1;
+
+	if (hlen > EVP_MAX_KEY_LENGTH)
+		hlen = EVP_MAX_KEY_LENGTH;
+	memcpy(key, digest, hlen);
+	return 0;
+}
+
+
+int pc_wrap::init(const string &k1, const string &k2, bool s)
+{
 	server_mode = s;
 
-#ifdef USE_SSL
 	err = "pc_wrap::init: Initializing crypto CTX failed.";
 
+	RAND_load_file("/dev/urandom", 128);
+
+	unsigned char tmp[16] = {0};
+	RAND_bytes(tmp, sizeof(tmp));
+	b64_encode(reinterpret_cast<char *>(tmp), sizeof(tmp), iv);
+	memset(iv + 16, 0, sizeof(iv) - 16);
+
 #if (OPENSSL_VERSION_NUMBER < 0x10100000L)
-	r_ctx = reinterpret_cast<EVP_CIPHER_CTX *>(new (nothrow) char[sizeof(EVP_CIPHER_CTX)]);
-	w_ctx = reinterpret_cast<EVP_CIPHER_CTX *>(new (nothrow) char[sizeof(EVP_CIPHER_CTX)]);
+	r_ctx = new (nothrow) EVP_CIPHER_CTX;
+	w_ctx = new (nothrow) EVP_CIPHER_CTX;
 	if (!r_ctx || !w_ctx)
 		return -1;
 
@@ -91,21 +112,17 @@ int pc_wrap::init(unsigned char *k1, unsigned char *k2, bool s)
 		return -1;
 #endif
 
-	if (EVP_EncryptInit(w_ctx, EVP_bf_ofb(), NULL, w_iv) != 1)
+	if (kdf(k1.c_str(), k1.size(), w_key) < 0)
 		return -1;
-	if (EVP_DecryptInit(r_ctx, EVP_bf_ofb(), NULL, r_iv) != 1)
-		return -1;
-
-	if (EVP_CIPHER_CTX_set_key_length(r_ctx, strlen((char *)rc4_k1)) != 1)
-		return -1;
-	if (EVP_CIPHER_CTX_set_key_length(w_ctx, strlen((char *)rc4_k2)) != 1)
+	if (kdf(k2.c_str(), k2.size(), r_key) < 0)
 		return -1;
 
-	if (EVP_EncryptInit(w_ctx, EVP_bf_ofb(), w_key, NULL) != 1)
+	// must be a stream cipher, so we are not bound by block sizes
+	if (EVP_EncryptInit_ex(w_ctx, EVP_aes_256_ctr(), nullptr, w_key, nullptr) != 1)
 		return -1;
-	if (EVP_DecryptInit(r_ctx, EVP_bf_ofb(), r_key, NULL) != 1)
+	if (EVP_DecryptInit_ex(r_ctx, EVP_aes_256_ctr(), nullptr, r_key, nullptr) != 1)
 		return -1;
-#endif
+
 	return 0;
 }
 
@@ -114,13 +131,11 @@ int pc_wrap::reset()
 {
 	seen_starttls = 0;
 
-	// rc4 state machine reset
-	prepare_key(rc4_k1, strlen((char*)rc4_k1), &rc4_read_key);
-	prepare_key(rc4_k2, strlen((char*)rc4_k2), &rc4_write_key);
-
-#ifdef USE_SSL
-
 	err = "pc_wrap::reset: Resetting crypto CTX failed.";
+
+	unsigned char tmp[16] = {0};
+	RAND_bytes(tmp, sizeof(tmp));
+	b64_encode(reinterpret_cast<char *>(tmp), sizeof(tmp), iv);
 
 #if (OPENSSL_VERSION_NUMBER < 0x10100000L)
 	EVP_CIPHER_CTX_cleanup(r_ctx);
@@ -134,49 +149,47 @@ int pc_wrap::reset()
 	EVP_CIPHER_CTX_reset(w_ctx);
 #endif
 
-	if (EVP_EncryptInit(w_ctx, EVP_bf_ofb(), NULL, w_iv) != 1)
+	if (EVP_EncryptInit_ex(w_ctx, EVP_aes_256_ctr(), nullptr, w_key, nullptr) != 1)
 		return -1;
-	if (EVP_DecryptInit(r_ctx, EVP_bf_ofb(), NULL, r_iv) != 1)
-		return -1;
-
-	if (EVP_CIPHER_CTX_set_key_length(r_ctx, strlen((char *)rc4_k1)) != 1)
-		return -1;
-	if (EVP_CIPHER_CTX_set_key_length(w_ctx, strlen((char *)rc4_k2)) != 1)
+	if (EVP_DecryptInit_ex(r_ctx, EVP_aes_256_ctr(), nullptr, r_key, nullptr) != 1)
 		return -1;
 
-	if (EVP_EncryptInit(w_ctx, EVP_bf_ofb(), w_key, NULL) != 1)
-		return -1;
-	if (EVP_DecryptInit(r_ctx, EVP_bf_ofb(), r_key, NULL) != 1)
-		return -1;
-#endif
-
-	seq = 0;
 	return 0;
 }
 
 
 pc_wrap::~pc_wrap()
 {
-	fclose(r_stream);
-	fclose(w_stream);
-	free(rc4_k1);
-	free(rc4_k2);
-
-#ifdef USE_SSL
 
 #if (OPENSSL_VERSION_NUMBER < 0x10100000L)
 	EVP_CIPHER_CTX_cleanup(r_ctx);
 	EVP_CIPHER_CTX_cleanup(w_ctx);
 
-	delete [] r_ctx;
-	delete [] w_ctx;
+	delete r_ctx;
+	delete w_ctx;
 #else
 	EVP_CIPHER_CTX_free(r_ctx);
 	EVP_CIPHER_CTX_free(w_ctx);
 
 #endif
-#endif
 
+}
+
+
+int pc_wrap::enable_crypto()
+{
+	if (EVP_EncryptInit_ex(w_ctx, nullptr, nullptr, nullptr, iv) != 1) {
+		err = "pc_wrap::enable_crypto: EncryptInit failed.";
+		return -1;
+	}
+	if (EVP_DecryptInit_ex(r_ctx, nullptr, nullptr, nullptr, iv) != 1) {
+		err = "pc_wrap::enable_crypto: DecryptInit failed.";
+		return -1;
+	}
+
+	seen_starttls = 1;
+
+	return 0;
 }
 
 
@@ -197,10 +210,7 @@ string pc_wrap::decrypt(char *buf, int len)
 	string result = "";
 	if (len <= 0)
 		return result;
-#ifndef USE_SSL
-	rc4((unsigned char*)buf, len, &rc4_read_key);
-	result.assign(buf, len);
-#else
+
 	int olen = 0;
 	char *obuf = new (nothrow) char[2*len + EVP_MAX_BLOCK_LENGTH];
 	if (!obuf)
@@ -208,8 +218,7 @@ string pc_wrap::decrypt(char *buf, int len)
 	EVP_DecryptUpdate(r_ctx, (unsigned char *)obuf, &olen, (unsigned char *)buf, len);
 	result.assign(obuf, olen);
 	delete [] obuf;
-#endif
-	++seq;
+
 	return result;
 }
 
@@ -220,10 +229,6 @@ string pc_wrap::encrypt(char *buf, int len)
 	if (len <= 0)
 		return result;
 
-#ifndef USE_SSL
-	rc4((unsigned char*)buf, len, &rc4_write_key);
-	result.assign(buf, len);
-#else
 	int olen = 0;
 	char *obuf = new (nothrow) char[2*len + EVP_MAX_BLOCK_LENGTH];
 	if (!obuf)
@@ -231,8 +236,7 @@ string pc_wrap::encrypt(char *buf, int len)
 	EVP_EncryptUpdate(w_ctx, (unsigned char *)obuf, &olen, (unsigned char *)buf, len);
 	result.assign(obuf, olen);
 	delete [] obuf;
-#endif
-	++seq;
+
 	return result;
 }
 
@@ -240,50 +244,32 @@ string pc_wrap::encrypt(char *buf, int len)
 int pc_wrap::read(char *buf, size_t blen)
 {
 	ssize_t r;
-	size_t ur;
-	char b64_crypt_buf[2*BLOCK_SIZE], esc = 0;
-	char *s = NULL;
-
-	if (blen < 3*sizeof(b64_crypt_buf)/4 || blen < sizeof(esc)) {
-		err = "pc_wrap::read: input buffer too small";
-		return -1;
-	}
-	memset(b64_crypt_buf, 0, sizeof(b64_crypt_buf));
+	char b64_crypt_buf[2*BLOCK_SIZE] = {0}, tbuf[2*BLOCK_SIZE] = {0};
+	bool found_nl = 0;
 
 	if (seen_starttls) {
-		// peek into stream to find potential ESC sequences
-		if ((ur = fread(&esc, 1, 1, r_stream)) == 0) {
-			err = "pc_wrap::read: invalid fread!\n";
-			return -1;
+		for (unsigned int i = 0; i < sizeof(b64_crypt_buf); ++i) {
+			if (::read(r_fd, b64_crypt_buf + i, 1) <= 0)
+				return -1;
+			if (b64_crypt_buf[i] == '\n') {
+				b64_crypt_buf[i] = 0;
+				found_nl = 1;
+				break;
+			}
 		}
-
-		// marker found?
-		if (marker[0] == esc) {
-			ungetc(esc, r_stream);
-			fgets(b64_crypt_buf, sizeof(b64_crypt_buf), r_stream);
-		} else {
-			if (!server_mode)
-				printf("psc: invalid character, ignoring\n");
-			return 0;
+		if (!found_nl) {
+			err = "pc_wrap::read: No NL found.";
+			return -1;
 		}
 
 		// when here, we have a valid b64 encoded crypted string
-
-		if ((s = strchr(b64_crypt_buf, '\n')) == NULL) {
-			err = "pc_wrap::read: No newline in b64 rstream!";
-			return -1;
-		}
-
-		*s = 0;
-		char *tbuf = new (nothrow) char[sizeof(b64_crypt_buf)];
-		if (!tbuf) {
-			err = "pc_wrap::read: OOM";
-			return -1;
-		}
-		memset(tbuf, 0, sizeof(b64_crypt_buf));
-		r = b64_decode(b64_crypt_buf + marker.size(), (unsigned char*)tbuf);
+		r = b64_decode(b64_crypt_buf, (unsigned char*)tbuf);
 		string s = decrypt(tbuf, r);
-		delete [] tbuf;
+
+		if (s.size() > blen) {
+			err = "pc_wrap::read: input buffer too small";
+			return -1;
+		}
 
 		// normal data?
 		if (s.find("D:channel0:") == 0) {
@@ -316,14 +302,18 @@ int pc_wrap::read(char *buf, size_t blen)
 	// as slow links read output one-bye-one or in small chunks, we need
 	// to slide-match STARTTLS sequence
 	recent += buf[0];
-	string::size_type i = recent.find(starttls);
-	if (i != string::npos) {
-		fflush(r_stream);
+	if (recent.size() == 18 + 16 && recent.find("psc-2018-STARTTLS-") == 0) {
+		memcpy(iv, recent.c_str() + 18, 16);
+		recent.clear();
 
-		if (i > 0 && i < blen)
-			memcpy(buf, recent.c_str(), i);
-		else
-			i = 0;
+		if (EVP_EncryptInit_ex(w_ctx, nullptr, nullptr, nullptr, iv) != 1) {
+			err = "pc_wrap::read: EVP_EncryptInit failed.";
+			return -1;
+		}
+		if (EVP_DecryptInit_ex(r_ctx, nullptr, nullptr, nullptr, iv) != 1) {
+			err = "pc_wrap::read: EVP_DecryptInit failed.";
+			return -1;
+		}
 
 		recent = "";
 		printf("psc: Seen STARTTLS sequence, enabling crypto.\r\n");
@@ -340,14 +330,29 @@ int pc_wrap::read(char *buf, size_t blen)
 			}
 			write_wsize();
 		}
-		return i;
+		return 0;
 	}
 
 	string::size_type nl = recent.find_last_of('\n');
 	if (nl != string::npos && nl + 1 < recent.size())
-		recent = recent.substr(nl + 1);
+		recent.erase(0, nl + 1);
 
 	return r;
+}
+
+
+static int writen(int fd, const char *buf, size_t blen)
+{
+	ssize_t r;
+	size_t n = blen;
+
+	for (int i = 0; n > 0;) {
+		if ((r = write(fd, buf + i, n)) <= 0)
+			return r;
+		i += r;
+		n -= r;
+	}
+	return (int)blen;
 }
 
 
@@ -356,16 +361,13 @@ int pc_wrap::write_cmd(const char *buf)
 	if (!seen_starttls)
 		return 0;
 
-	char cmd_buf[256];
-	unsigned char cbuf[512];
-	memset(cmd_buf, 0, sizeof(cmd_buf));
-	memset(cbuf, 0, sizeof(cbuf));
-	snprintf(cmd_buf, sizeof(cmd_buf), "C:%s:", buf);
+	char cmd_buf[256] = {0};
+	unsigned char cbuf[512] = {0};
+	snprintf(cmd_buf, sizeof(cmd_buf) - 1, "C:%s:", buf);
 	string s = encrypt(cmd_buf, strlen(cmd_buf));
-	b64_encode(s.c_str(), s.size(), cbuf);
-	fprintf(w_stream, "%s%s\n", marker.c_str(), cbuf);
-	return 0;
-
+	string b64 = b64_encode(s.c_str(), s.size(), cbuf);
+	b64 += "\n";
+	return writen(w_fd, b64.c_str(), b64.size());
 }
 
 
@@ -378,8 +380,8 @@ int pc_wrap::write(const void *buf, size_t blen)
 		return -1;
 	}
 
-	char *crypt_buf = NULL;
-	unsigned char *b64_crypt_buf = NULL;
+	char *crypt_buf = nullptr;
+	unsigned char *b64_crypt_buf = nullptr;
 
 	if (seen_starttls) {
 		crypt_buf = new (nothrow) char[blen + 32];
@@ -394,8 +396,9 @@ int pc_wrap::write(const void *buf, size_t blen)
 		if (!b64_crypt_buf)
 			return -1;
 		memset(b64_crypt_buf, 0, 2*s.size() + 64);
-		b64_encode(s.c_str(), s.size(), b64_crypt_buf);
-		fprintf(w_stream, "%s%s\n", marker.c_str(), b64_crypt_buf);
+		string b64 = b64_encode(s.c_str(), s.size(), b64_crypt_buf);
+		b64 += "\n";
+		writen(w_fd, b64.c_str(), b64.size());
 
 		delete [] crypt_buf;
 		delete [] b64_crypt_buf;
@@ -411,7 +414,7 @@ int pc_wrap::write_wsize()
 	if (!seen_starttls)
 		return 0;
 
-	char wsbuf[64];
+	char wsbuf[64] = {0};
 	if (ioctl(0, TIOCGWINSZ, &ws) < 0)
 		return -1;
 	memset(wsbuf, 0, sizeof(wsbuf));

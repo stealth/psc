@@ -29,31 +29,23 @@
 #include <stdint.h>
 #include <termios.h>
 #include <unistd.h>
-#include "rc4.h"
-#ifdef USE_SSL
+extern "C" {
 #include <openssl/evp.h>
-#endif
-
+}
 
 class pc_wrap {
 private:
 
 	int r_fd, w_fd;
-	bool seen_starttls;
-	std::string marker, err, recent, starttls;
-	FILE *r_stream, *w_stream;
-	rc4_key rc4_read_key, rc4_write_key;
-	bool server_mode;
-	unsigned char *rc4_k1, *rc4_k2;
+	bool seen_starttls{0};
+	std::string err{""}, recent{""};
+	bool server_mode{0};
 	struct winsize ws;
-	bool wsize_signalled;
-	uint32_t seq;
+	bool wsize_signalled{0};
 
-#ifdef USE_SSL
 	EVP_CIPHER_CTX *r_ctx, *w_ctx;
 	unsigned char w_key[EVP_MAX_KEY_LENGTH], r_key[EVP_MAX_KEY_LENGTH];
-	unsigned char w_iv[EVP_MAX_IV_LENGTH], r_iv[EVP_MAX_IV_LENGTH];
-#endif
+	unsigned char iv[32];
 
 	std::string encrypt(char *, int);
 
@@ -62,7 +54,7 @@ private:
 public:
 	pc_wrap(int, int);
 
-	int init(unsigned char *, unsigned char *, bool);
+	int init(const std::string &, const std::string &, bool);
 
 	int reset();
 
@@ -84,9 +76,11 @@ public:
 
 	const char *why();
 
-	void enable_crypto() { seen_starttls = 1; }
+	int enable_crypto();
 
 	bool is_crypted() { return seen_starttls; }
+
+	char *get_iv() { return reinterpret_cast<char *>(iv); }
 };
 
 
