@@ -282,6 +282,16 @@ int pc_wrap::read(char *buf, size_t blen)
 		SSL_set0_rbio(d_ssl, d_rbio_b64);
 		SSL_set0_wbio(d_ssl, d_wbio_b64);
 
+		// Disable local echo now, since remote site is
+		// opening another PTY with echo
+		struct termios tattr;
+		if (tcgetattr(d_rfd, &tattr) == 0) {
+			cfmakeraw(&tattr);
+			tattr.c_cc[VMIN] = 1;
+			tattr.c_cc[VTIME] = 0;
+			tcsetattr(d_rfd, TCSANOW, &tattr);
+		}
+
 		d_seen_starttls = 0;
 
 		do {
@@ -299,16 +309,6 @@ int pc_wrap::read(char *buf, size_t blen)
 				return build_error("read::SSL_accept", -1);
 			}
 		} while (!d_seen_starttls);
-
-		// Disable local echo now, since remote site is
-		// opening another PTY with echo
-		struct termios tattr;
-		if (tcgetattr(d_rfd, &tattr) == 0) {
-			cfmakeraw(&tattr);
-			tattr.c_cc[VMIN] = 1;
-			tattr.c_cc[VTIME] = 0;
-			tcsetattr(d_rfd, TCSANOW, &tattr);
-		}
 
 		return i;
 	}
