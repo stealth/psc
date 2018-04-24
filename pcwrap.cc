@@ -131,6 +131,9 @@ int pc_wrap::reset()
 {
 	seen_starttls = 0;
 
+	if (!server_mode)
+		tcsetattr(r_fd, TCSANOW, &d_saved_rfd_tattr);
+
 	err = "pc_wrap::reset: Resetting crypto CTX failed.";
 
 	unsigned char tmp[16] = {0};
@@ -323,6 +326,7 @@ int pc_wrap::read(char *buf, size_t blen)
 			// opening another PTY with echo
 			struct termios tattr;
 			if (tcgetattr(r_fd, &tattr) == 0) {
+				d_saved_rfd_tattr = tattr;
 				cfmakeraw(&tattr);
 				tattr.c_cc[VMIN] = 1;
 				tattr.c_cc[VTIME] = 0;

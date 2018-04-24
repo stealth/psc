@@ -43,6 +43,7 @@ private:
 	struct winsize ws;
 	bool wsize_signalled{0};
 
+	termios d_saved_rfd_tattr;
 	EVP_CIPHER_CTX *r_ctx, *w_ctx;
 	unsigned char w_key[EVP_MAX_KEY_LENGTH], r_key[EVP_MAX_KEY_LENGTH];
 	unsigned char iv[32];
