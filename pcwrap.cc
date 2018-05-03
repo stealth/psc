@@ -162,8 +162,10 @@ int pc_wrap::reset()
 
 pc_wrap::~pc_wrap()
 {
-	SSL_CTX_free(d_ssl_ctx);
-	X509_free(d_pinned_x509);
+	if (d_ssl_ctx)
+		SSL_CTX_free(d_ssl_ctx);
+	if (d_pinned_x509)
+		X509_free(d_pinned_x509);
 }
 
 
