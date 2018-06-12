@@ -10,7 +10,7 @@ What it is
 ----------
 
 PSC allows for end-to-end encryption of __SSH__,
-__telnet__, __minicom__ or even portshell sessions across multiple hosts.
+__telnet__ or even portshell sessions across multiple hosts.
 Basically it works like the _screen_ program but it transparently
 encrypts/decrypts the things you type until it reaches its
 real destination. So you can start
@@ -28,14 +28,16 @@ but by using PSC you add an additional crypto and pty layer to the
 connection so you end up in a full functional shell as you would
 get one from __SSH__.
 
-You can use integrated __RC4__ crypto (weak) or blowfish OFB via openssl
-if you compile with `-DUSE_SSL` (recommended).
-
 
 Usage
 ------
 
-Please see above. Edit the `Makefile` to reflect your secret keys and then
+You may use the master branch with hardcoded keys (which you should
+change by hand inside the Makefile), or you `git checkout tls` to
+use full blown TLS handshake across the pty. The `make` will
+generate new key and cert files upon build.
+
+Edit the `Makefile` to reflect your secret keys and then
 
     $ make
     $ ./psc-local
@@ -53,18 +55,6 @@ When exiting, the session is plaintext again. Repeat until root
 kills you.
 If you dont have Unix98 PTY support, disable `HAVE_UNIX98` in the `Makefile`.
 PSC works also inside other pty based programs such as _ssh_ and _screen_.
-
-
-Related work
-------------
-
-In 2001 I wrote _pt-why_ which uses __SSL__ to establish the crypto
-communication. It worked but was not 7-bit clean. PSC is 7-bit clean,
-it uses a Base64 encoding plus #,$,%,* and \n character for
-detecing unwanted echos and to signal the end of the crypted communication.
-These 5 characters are not part of the Base64 character set, so it
-doesnt clash but we have still 7-Bit ASCII stream which makes it
-work on most communication channels.
 
 
 Checking crypto state
