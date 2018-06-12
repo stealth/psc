@@ -93,9 +93,10 @@ int pc_wrap::init(const string &cert, const string &key, bool rem)
 				return build_error("init::SSL_CTX_use_certificate", -1);
 		} else {
 			FILE *f = fopen(cert.c_str(), "r");
-			if (f)
+			if (f) {
 				d_pinned_x509 = PEM_read_X509(f, nullptr, nullptr, nullptr);
-			fclose(f);
+				fclose(f);
+			}
 		}
 	}
 
