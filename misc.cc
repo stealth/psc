@@ -1,7 +1,7 @@
 /*
  * This file is part of port shell crypter (psc).
  *
- * (C) 2006-2013 by Sebastian Krahmer,
+ * (C) 2006-2020 by Sebastian Krahmer,
  *                  sebastian [dot] krahmer [at] gmail [dot] com
  *
  * psc is free software: you can redistribute it and/or modify
@@ -18,17 +18,31 @@
  * along with psc.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <sys/types.h>
-#include <stdio.h>
-#include <sys/time.h>
-#include <errno.h>
+
+#include <cstdio>
+#include <cerrno>
 #include <fcntl.h>
-#include <string.h>
+#include <map>
+#include <string>
+#include <cstring>
 #include <unistd.h>
 #include <stdlib.h>
 #include <termios.h>
+#include <sys/time.h>
+#include <sys/types.h>
 #include <sys/ioctl.h>
 
+
+using namespace std;
+
+
+namespace config {
+
+map<string, string> tcp_listens, udp_listens;
+
+}
+
+namespace ns_psc {
 
 extern struct termios exit_tattr;
 
@@ -41,7 +55,6 @@ void die(const char *s)
 }
 
 
-
 void fix_size(int fd)
 {
 	struct winsize win;
@@ -49,6 +62,28 @@ void fix_size(int fd)
 	if (ioctl(0, TIOCGWINSZ, (char*)&win) >= 0)
 		ioctl(fd, TIOCSWINSZ, (char*)&win);
 }
+
+
+int writen(int fd, const char *buf, size_t blen)
+{
+	ssize_t r;
+	size_t n = blen;
+
+	for (int i = 0; n > 0;) {
+		r = write(fd, buf + i, n);
+		if (r == 0)
+			return 0;
+		if (r < 0) {
+			if ((errno == EAGAIN || errno == EWOULDBLOCK))
+				return i;
+			return r;
+		}
+		i += r;
+		n -= r;
+	}
+	return (int)blen;
+}
+
 
 static const char *b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -125,4 +160,5 @@ char *b64_encode(const char *s, size_t len, unsigned char *buf)
 	return reinterpret_cast<char *>(result);
 }
 
+}
 

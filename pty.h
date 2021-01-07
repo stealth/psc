@@ -1,7 +1,7 @@
 /*
  * This file is part of port shell crypter (psc).
  *
- * (C) 2006-2013 by Sebastian Krahmer,
+ * (C) 2006-2020 by Sebastian Krahmer,
  *                  sebastian [dot] krahmer [at] gmail [dot] com
  *
  * psc is free software: you can redistribute it and/or modify
@@ -18,8 +18,8 @@
  * along with psc.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef __pty_h__
-#define __pty_h__
+#ifndef psc_pty_h
+#define psc_pty_h
 
 #include <sys/types.h>
 #include <sys/ioctl.h>
@@ -27,7 +27,8 @@
 #include <unistd.h>
 #include <string>
 
-using namespace std;
+
+namespace ns_psc {
 
 // A BSD 4.3+ PTY API.
 class pty {
@@ -36,7 +37,7 @@ protected:
 	int _master, _slave;
 
 	// names of device-files
-	string m, s, serr;
+	std::string m, s, serr;
 public:
 	pty() : _master(-1), _slave(-1), m(""), s(""), serr("") {}
 
@@ -59,9 +60,9 @@ public:
 
 	int slave() { return _slave; }
 
-	string mname() { return m; }
+	std::string mname() { return m; }
 
-	string sname() { return s; }
+	std::string sname() { return s; }
 
 	// do chown
 	int grant(uid_t, gid_t, mode_t);
@@ -83,5 +84,6 @@ public:
 	virtual int open();
 };
 
+}
 
 #endif

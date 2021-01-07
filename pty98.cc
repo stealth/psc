@@ -1,7 +1,7 @@
 /*
  * This file is part of port shell crypter (psc).
  *
- * (C) 2006-2013 by Sebastian Krahmer,
+ * (C) 2006-2020 by Sebastian Krahmer,
  *                  sebastian [dot] krahmer [at] gmail [dot] com
  *
  * psc is free software: you can redistribute it and/or modify
@@ -34,6 +34,9 @@
 #include <sys/stream.h>
 #include <sys/stropts.h>
 #endif
+
+namespace ns_psc {
+
 
 pty98::pty98(const pty98 &rhs)
 	: pty(rhs)
@@ -84,5 +87,7 @@ int pty98::open()
 
 #endif
 	return 0;
+}
+
 }
 

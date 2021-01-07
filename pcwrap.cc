@@ -1,7 +1,7 @@
 /*
  * This file is part of port shell crypter (psc).
  *
- * (C) 2006-2018 by Sebastian Krahmer,
+ * (C) 2006-2020 by Sebastian Krahmer,
  *                  sebastian [dot] krahmer [at] gmail [dot] com
  *
  * psc is free software: you can redistribute it and/or modify
@@ -43,13 +43,12 @@ extern "C" {
 
 using namespace std;
 
+namespace ns_psc {
+
 
 pc_wrap::pc_wrap(int rfd, int wfd)
 	: r_fd(rfd), w_fd(wfd)
 {
-	memset(w_key, 0, sizeof(w_key));
-	memset(r_key, 0, sizeof(r_key));
-	memset(iv, 0, sizeof(iv));
 }
 
 
@@ -208,17 +207,17 @@ int pc_wrap::check_wsize(int fd)
 }
 
 
-string pc_wrap::decrypt(char *buf, int len)
+string pc_wrap::decrypt(const string &buf)
 {
 	string result = "";
-	if (len <= 0)
+	if (buf.size() <= 0)
 		return result;
 
 	int olen = 0;
-	char *obuf = new (nothrow) char[2*len + EVP_MAX_BLOCK_LENGTH];
+	char *obuf = new (nothrow) char[2*buf.size() + EVP_MAX_BLOCK_LENGTH];
 	if (!obuf)
 		return result;
-	EVP_DecryptUpdate(r_ctx, (unsigned char *)obuf, &olen, (unsigned char *)buf, len);
+	EVP_DecryptUpdate(r_ctx, reinterpret_cast<unsigned char *>(obuf), &olen, reinterpret_cast<const unsigned char *>(buf.c_str()), buf.size());
 	result.assign(obuf, olen);
 	delete [] obuf;
 
@@ -226,17 +225,17 @@ string pc_wrap::decrypt(char *buf, int len)
 }
 
 
-string pc_wrap::encrypt(char *buf, int len)
+string pc_wrap::encrypt(const string &buf)
 {
 	string result = "";
-	if (len <= 0)
+	if (buf.size() == 0)
 		return result;
 
 	int olen = 0;
-	char *obuf = new (nothrow) char[2*len + EVP_MAX_BLOCK_LENGTH];
+	char *obuf = new (nothrow) char[2*buf.size() + EVP_MAX_BLOCK_LENGTH];
 	if (!obuf)
 		return result;
-	EVP_EncryptUpdate(w_ctx, (unsigned char *)obuf, &olen, (unsigned char *)buf, len);
+	EVP_EncryptUpdate(w_ctx, reinterpret_cast<unsigned char *>(obuf), &olen, reinterpret_cast<const unsigned char *>(buf.c_str()), buf.size());
 	result.assign(obuf, olen);
 	delete [] obuf;
 
@@ -244,70 +243,89 @@ string pc_wrap::encrypt(char *buf, int len)
 }
 
 
-int pc_wrap::read(char *buf, size_t blen)
+int pc_wrap::read(bool nosys, string &buf, string &ext_cmd, int &starttls)
 {
 	ssize_t r;
-	char b64_crypt_buf[2*BLOCK_SIZE] = {0}, tbuf[2*BLOCK_SIZE] = {0};
-	bool found_nl = 0;
+	char tbuf[2*BLOCK_SIZE] = {0};
+	string inbuf = "";
+
+	buf.clear();
+	ext_cmd.clear();
+	starttls = 0;
+
+	string::size_type idx1 = 0, idx2 = 0;
+
+	// Do not call syscall if we just want to check for remaining data to avoid
+	// blocking other pollfd's in the main loop by calling read() on the same fd
+	// again and again for potentially mass of data pumped through
+	if (!nosys) {
+		if ((r = ::read(r_fd, tbuf, sizeof(tbuf))) <= 0) {
+			err = "pc_wrap::read::";
+			err += strerror(errno);
+			return -1;
+		}
+		inbuf = string(tbuf, r);
+		inq += inbuf;
+	}
 
 	if (seen_starttls) {
-		for (unsigned int i = 0; i < sizeof(b64_crypt_buf); ++i) {
-			if (::read(r_fd, b64_crypt_buf + i, 1) <= 0)
-				return -1;
-			if (b64_crypt_buf[i] == '\n') {
-				b64_crypt_buf[i] = 0;
-				found_nl = 1;
-				break;
-			}
-		}
-		if (!found_nl) {
-			err = "pc_wrap::read: No NL found.";
-			return -1;
-		}
 
-		// when here, we have a valid b64 encoded crypted string
-		r = b64_decode(b64_crypt_buf, (unsigned char*)tbuf);
-		string s = decrypt(tbuf, r);
-
-		if (s.size() > blen) {
-			err = "pc_wrap::read: input buffer too small";
-			return -1;
-		}
-
-		// normal data?
-		if (s.find("D:channel0:") == 0) {
-			memcpy(buf, s.c_str() + 11, s.size() - 11);
-			return s.size() - 11;
-		// some command
-		} else if (s.find("C:window-size:") == 0) {
-			wsize_signalled = 1;
-			if (sscanf(s.c_str() + 14, "%hu:%hu:%hu:%hu", &ws.ws_row, &ws.ws_col,
-			           &ws.ws_xpixel, &ws.ws_ypixel) != 4)
-				wsize_signalled = 0;
-		} else if (s.find("C:exit:") == 0) {
-			// psc-remote is quitting, reset crypto state
-			if (this->reset() < 0)
-				return -1;
-			printf("psc: Seen end-sequence, disabling crypto!\r\n");
+		if ((idx2 = inq.find(")")) == string::npos)
+			return 0;
+		if ((idx1 = inq.find("(")) == string::npos) {
+			inq.clear();
 			return 0;
 		}
 
-		return 0;
+		// silently ignore too large chunks
+		if (idx2 - idx1 > BLOCK_SIZE) {
+			inq.clear();
+			return 0;
+		}
+
+		// when here, we have a valid b64 encoded crypted string. b64 decode will automatically
+		// stop at closing ) since its an invalid B64 char
+		r = b64_decode(inq.c_str() + idx1 + 1, reinterpret_cast<unsigned char *>(tbuf));
+		string s = decrypt(string(tbuf, r));
+
+		inq.erase(0, idx2 + 1);
+
+		// normal data?
+		if (s.find("D:0:") == 0) {
+			buf = move(s.substr(4));
+		// window-size command
+		} else if (s.find("C:WS:") == 0) {
+			wsize_signalled = 1;
+			if (sscanf(s.c_str() + 5, "%hu:%hu:%hu:%hu", &ws.ws_row, &ws.ws_col,
+			           &ws.ws_xpixel, &ws.ws_ypixel) != 4)
+				wsize_signalled = 0;
+		} else if (s.find("C:exit:") == 0) {
+			// if pscr is executed directly in pscl, there is a race of pscr vanishing with its
+			// pty while we are trying to reset pty master to old state. Increase chances of pscr
+			// finishing and pscl (us) resetting the right pty and not the pty of exiting pscr.
+			usleep(50000);
+
+			// psc-remote is quitting, reset crypto state
+			if (this->reset() < 0)
+				return -1;
+			printf("\r\npscl: Seen end-sequence, disabling crypto!\r\npscl: If tty is hangup, type 'reset'.\r\n");
+
+		// any other command needs to be handled by external filter
+		} else if (s.find("C:") == 0)
+			ext_cmd = move(s);
+
+		// more complete data blobs in the in queue?
+		return inq.find(")") != string::npos;
 	}
 
-	r = ::read(r_fd, buf, 1);
-	if (r != 1) {
-		err = "pc_wrap::read::";
-		err += strerror(errno);
-		return -1;
-	}
+	recent += inbuf;
 
 	// as slow links read output one-bye-one or in small chunks, we need
 	// to slide-match STARTTLS sequence
-	recent += buf[0];
-	if (recent.size() == 18 + 16 && recent.find("psc-2018-STARTTLS-") == 0) {
-		memcpy(iv, recent.c_str() + 18, 16);
-		recent.clear();
+	if (recent.size() >= 18 + 16 && (idx1 = recent.find("psc-2020-STARTTLS-")) != string::npos) {
+		memcpy(iv, recent.c_str() + idx1 + 18, 16);
+
+		recent.erase(0, idx1 + 18 + 16);
 
 		if (EVP_EncryptInit_ex(w_ctx, nullptr, nullptr, nullptr, iv) != 1) {
 			err = "pc_wrap::read: EVP_EncryptInit failed.";
@@ -318,9 +336,9 @@ int pc_wrap::read(char *buf, size_t blen)
 			return -1;
 		}
 
-		recent = "";
-		printf("psc: Seen STARTTLS sequence, enabling crypto.\r\n");
+		printf("\r\npscl: Seen STARTTLS sequence, enabling crypto.\r\n");
 		seen_starttls = 1;
+		starttls = 1;
 		if (!server_mode) {
 			// Disable local echo now, since remote site is
 			// opening another PTY with echo
@@ -332,99 +350,72 @@ int pc_wrap::read(char *buf, size_t blen)
 				tattr.c_cc[VTIME] = 0;
 				tcsetattr(r_fd, TCSANOW, &tattr);
 			}
-			write_wsize();
+			// window size will be signalled in main loop() since we set starttls = 1
 		}
-		return 0;
+
+		buf = inq;
+
+		// the remaining bytes after STARTTLS tag
+		inq = recent;
+
+		// Everything after starttls sequence will be b64encrypted, so check whether there
+		// is already an entire block read
+		return inq.find(")") != string::npos;
 	}
 
 	string::size_type nl = recent.find_last_of('\n');
 	if (nl != string::npos && nl + 1 < recent.size())
 		recent.erase(0, nl + 1);
 
-	return r;
+	buf = inq;
+	inq.clear();
+	return 0;
 }
 
 
-static int writen(int fd, const char *buf, size_t blen)
+string pc_wrap::possibly_b64encrypt(const std::string &tag, const string &buf)
 {
-	ssize_t r;
-	size_t n = blen;
+	string r = "";
 
-	for (int i = 0; n > 0;) {
-		if ((r = write(fd, buf + i, n)) <= 0)
-			return r;
-		i += r;
-		n -= r;
-	}
-	return (int)blen;
-}
-
-
-int pc_wrap::write_cmd(const char *buf)
-{
-	if (!seen_starttls)
-		return 0;
-
-	char cmd_buf[256] = {0};
-	unsigned char cbuf[512] = {0};
-	snprintf(cmd_buf, sizeof(cmd_buf) - 1, "C:%s:", buf);
-	string s = encrypt(cmd_buf, strlen(cmd_buf));
-	string b64 = b64_encode(s.c_str(), s.size(), cbuf);
-	b64 += "\n";
-	return writen(w_fd, b64.c_str(), b64.size());
-}
-
-
-int pc_wrap::write(const void *buf, size_t blen)
-{
-	int r = 0;
-
-	if (blen > BLOCK_SIZE) {
-		err = "pc_wrap::write: too large buffer!\n";
-		return -1;
+	if (buf.size() > BLOCK_SIZE) {
+		err = "pc_wrap::possibly_b64encrypt: bufsize too large";
+		return r;
 	}
 
-	char *crypt_buf = nullptr;
 	unsigned char *b64_crypt_buf = nullptr;
 
 	if (seen_starttls) {
-		crypt_buf = new (nothrow) char[blen + 32];
-		if (!crypt_buf)
-			return -1;
-
-		snprintf(crypt_buf, 32, "D:channel0:");
-		memcpy(crypt_buf + 11, buf, blen);
-		blen += 11;
-		string s = encrypt(crypt_buf, (int)blen);
-		b64_crypt_buf = new (nothrow) unsigned char[2*s.size() + 64];
+		string s = encrypt(tag + buf);
+		b64_crypt_buf = new (nothrow) unsigned char[2*s.size()];
 		if (!b64_crypt_buf)
-			return -1;
-		memset(b64_crypt_buf, 0, 2*s.size() + 64);
-		string b64 = b64_encode(s.c_str(), s.size(), b64_crypt_buf);
-		b64 += "\n";
-		writen(w_fd, b64.c_str(), b64.size());
+			return r;
+		memset(b64_crypt_buf, 0, 2*s.size());
+		r = "(";
+		r += b64_encode(s.c_str(), s.size(), b64_crypt_buf);
+		r += ")";
 
-		delete [] crypt_buf;
 		delete [] b64_crypt_buf;
-		return blen - 11;
+		return r;
 	}
-	r = ::write(w_fd, buf, blen);
+
+	// if starttls not seen yet, just pass plain buf
+	r = buf;
 	return r;
 }
 
 
-int pc_wrap::write_wsize()
+string pc_wrap::wsize_cmd()
 {
 	if (!seen_starttls)
-		return 0;
+		return "";
 
 	char wsbuf[64] = {0};
 	if (ioctl(0, TIOCGWINSZ, &ws) < 0)
-		return -1;
+		return "";
 	memset(wsbuf, 0, sizeof(wsbuf));
-	snprintf(wsbuf, sizeof(wsbuf), "window-size:%hu:%hu:%hu:%hu", ws.ws_row,
+	snprintf(wsbuf, sizeof(wsbuf), "WS:%hu:%hu:%hu:%hu", ws.ws_row,
 	         ws.ws_col, ws.ws_xpixel, ws.ws_ypixel);
-	return write_cmd(wsbuf);
+	return possibly_b64encrypt("C:", wsbuf);
 }
 
 
@@ -443,5 +434,7 @@ int pc_wrap::w_fileno()
 const char *pc_wrap::why()
 {
 	return err.c_str();
+}
+
 }
 

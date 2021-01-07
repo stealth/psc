@@ -1,33 +1,21 @@
 /*
- * Copyright (C) 2001-2009 Sebastian Krahmer.
- * All rights reserved.
+ * This file is part of port shell crypter (psc).
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- * 3. All advertising materials mentioning features or use of this software
- *    must display the following acknowledgement:
- *      This product includes software developed by Sebastian Krahmer.
- * 4. The name Sebastian Krahmer may not be used to endorse or promote
- *    products derived from this software without specific prior written
- *    permission.
+ * (C) 2006-2020 by Sebastian Krahmer,
+ *                  sebastian [dot] krahmer [at] gmail [dot] com
  *
- * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
- * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
- * SUCH DAMAGE.
+ * psc is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * psc is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with psc.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include "pty.h"
@@ -42,9 +30,11 @@
 
 using namespace std;
 
+namespace ns_psc {
+
 pty::pty(const pty &rhs)
 {
-	if (this == &rhs) 
+	if (this == &rhs)
 		return;
 	_slave = dup(rhs._slave); _master = dup(rhs._master);
 	m = rhs.m; s = rhs.s;
@@ -58,7 +48,7 @@ pty &pty::operator=(const pty &rhs)
 	m = rhs.m; s = rhs.s;
 	return *this;
 }
-	
+
 
 // Open master+slave terminal
 // returns 0 on sucess, -1 on failure
@@ -72,7 +62,7 @@ int pty::open()
 		ptys[8] = *it1;
 		for (; *it2 != 0; ++it2) {
 			ptys[9] = *it2;
-			
+
 			// do master-part
 			if ((_master = ::open(ptys, O_RDWR|O_NOCTTY)) < 0) {
 				if (errno == ENOENT) {
@@ -94,10 +84,10 @@ int pty::open()
 			return 0;
 		}
 	}
-	
+
 	// out of terminals
 	serr = "Dance the funky chicken (or use Unix98 pty's).";
-	return -1;						
+	return -1;
 }
 
 
@@ -128,4 +118,6 @@ const char *pty::why()
 {
 	return serr.c_str();
 }
-	
+
+}
+
