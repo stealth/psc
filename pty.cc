@@ -1,7 +1,7 @@
 /*
  * This file is part of port shell crypter (psc).
  *
- * (C) 2006-2020 by Sebastian Krahmer,
+ * (C) 2006-2021 by Sebastian Krahmer,
  *                  sebastian [dot] krahmer [at] gmail [dot] com
  *
  * psc is free software: you can redistribute it and/or modify
@@ -18,9 +18,14 @@
  * along with psc.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#ifdef __linux__
+#define _POSIX_C_SOURCE  200809L
+#endif
+
 #include "pty.h"
 #include <sys/types.h>
-#include <stdio.h>
+#include <cstdio>
+#include <cstdlib>
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -54,6 +59,7 @@ pty &pty::operator=(const pty &rhs)
 // returns 0 on sucess, -1 on failure
 int pty::open()
 {
+#ifdef OLD_BSD_PTY
 	char ptys[] = "/dev/ptyXY";
 	const char *it1 = "pqrstuvwxyzPQRST",
 	           *it2 = "0123456789abcdef";
@@ -88,6 +94,27 @@ int pty::open()
 	// out of terminals
 	serr = "Dance the funky chicken (or use Unix98 pty's).";
 	return -1;
+
+#else
+	if ((_master = posix_openpt(O_RDWR|O_NOCTTY)) < 0) {
+		serr = strerror(errno);
+		return -1;
+	}
+
+	grantpt(_master);
+	unlockpt(_master);
+	s = ptsname(_master);
+
+	// master finished. Do slave-part.
+	if ((_slave = ::open(s.c_str(), O_RDWR|O_NOCTTY)) < 0) {
+		::close(_master);
+		serr = strerror(errno);
+		return -1;
+	}
+
+	fchmod(_slave, 0600);
+	return 0;
+#endif
 }
 
 
@@ -100,6 +127,8 @@ int pty::close()
 
 int pty::grant(uid_t u, gid_t g, mode_t mode)
 {
+
+#ifdef OLD_BSD_PTY
 	if (chown(m.c_str(), u, g) < 0 || chown(s.c_str(), u, g) < 0) {
 		serr = strerror(errno);
 		return -1;
@@ -111,6 +140,8 @@ int pty::grant(uid_t u, gid_t g, mode_t mode)
 		return -1;
 	}
 	umask(mask);
+#endif
+
 	return 0;
 }
 

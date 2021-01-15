@@ -22,6 +22,7 @@
 #include <memory>
 #include <cerrno>
 #include <cstring>
+#include <cstdlib>
 #include <time.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -41,7 +42,7 @@ namespace ns_psc {
 
 // maps "IP/port/ID/" string to actual socket, so that we know
 // which socket the tagged cmd data belongs to, which carries IP/port pair in front
-map<string, int> nodes2sock;
+map<string, int> tcp_nodes2sock, udp_nodes2sock;
 
 
 static int listen(int type, const string &ip, const string &port)
@@ -67,7 +68,7 @@ static int listen(int type, const string &ip, const string &port)
 	one = 1;
 	setsockopt(sock_fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
 
-	if (bind(sock_fd, ai->ai_addr, ai->ai_addrlen) < 0)
+	if (::bind(sock_fd, ai->ai_addr, ai->ai_addrlen) < 0)
 		return -1;
 	if (type == SOCK_STREAM) {
 		if (::listen(sock_fd, 12) < 0)
@@ -173,12 +174,12 @@ int cmd_handler(const string &cmd, state *fd2state, pollfd *pfds)
 		fd2state[sock].rnode = node;
 		fd2state[sock].time = time(nullptr);
 
-		nodes2sock[node] = sock;
+		tcp_nodes2sock[node] = sock;
 
 	// non-blocking connect() got ready
 	} else if (cmd.find("C:T:C:") == 0) {
-		auto it = nodes2sock.find(node);
-		if (it == nodes2sock.end())
+		auto it = tcp_nodes2sock.find(node);
+		if (it == tcp_nodes2sock.end())
 			return -1;
 		sock = it->second;
 
@@ -193,11 +194,11 @@ int cmd_handler(const string &cmd, state *fd2state, pollfd *pfds)
 
 	// finish connection
 	} else if (cmd.find("C:T:F:") == 0) {
-		auto it = nodes2sock.find(node);
-		if (it == nodes2sock.end())
+		auto it = tcp_nodes2sock.find(node);
+		if (it == tcp_nodes2sock.end())
 			return -1;
 		sock = it->second;
-		nodes2sock.erase(it);
+		tcp_nodes2sock.erase(it);
 
 		// flush remaining data
 		if (fd2state[sock].obuf.size() > 0)
@@ -216,8 +217,8 @@ int cmd_handler(const string &cmd, state *fd2state, pollfd *pfds)
 
 	// send or receive data
 	} else if (cmd.find("C:T:S:") == 0 || cmd.find("C:T:R:") == 0) {
-		auto it = nodes2sock.find(node);
-		if (it == nodes2sock.end())
+		auto it = tcp_nodes2sock.find(node);
+		if (it == tcp_nodes2sock.end())
 			return -1;
 		sock = it->second;
 		pfds[sock].events |= POLLOUT;
@@ -226,11 +227,11 @@ int cmd_handler(const string &cmd, state *fd2state, pollfd *pfds)
 		fd2state[sock].time = time(nullptr);
 
 	} else if (cmd.find("C:U:S:") == 0 || cmd.find("C:U:R:") == 0) {
-		auto it = nodes2sock.find(node);
-		if (it == nodes2sock.end()) {
+		auto it = udp_nodes2sock.find(node);
+		if (it == udp_nodes2sock.end()) {
 			if ((sock = udp_connect(host, port)) < 0)
 				return -1;
-			nodes2sock[node] = sock;
+			udp_nodes2sock[node] = sock;
 
 			// Just fill rnode part in server side. client main loop expects ID/ part not to be
 			// appended

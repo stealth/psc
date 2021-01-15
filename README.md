@@ -1,7 +1,10 @@
 PortShellCrypter -- PSC
 =======================
 
-PSC allows to e2e encrypt shell sessions across multiple hosts, being
+[![asciicast](https://asciinema.org/a/383043.svg)](https://asciinema.org/a/383043)
+*DNS lookup and SSH session forwarded across an UART connection to a Pi*
+
+PSC allows to e2e encrypt shell sessions, single- or multip-hop, being
 agnostic of the underlying transport, as long as it is reliable and can send/receive
 Base64 encoded data without modding/filtering. Along with the e2e pty that
 you receive (for example inside a portshell), you can forward TCP and UDP
@@ -21,11 +24,28 @@ for example via:
 Just imagine you would have an invisible ppp session inside your shell session,
 without the remote peer actually supporting ppp.
 
+It runs on *Linux, Android, OSX, FreeBSD, NetBSD* and (possibly) *OpenBSD*.
+
+PSC also includes *SOCKS4* and *SOCKS5* proxy support in order to have actual
+web browsing sessions via portshells or modem dialups remotely.
+
 Build
 -----
 
 Edit the `Makefile` to reflect your pre shared keys, as defined
-at the top of the Makefile. Then just type `make`.
+at the top of the `Makefile`.
+
+Then just type `make` on *Linux*.
+
+On *BSD*, you need to install *GNU make* and invoke `gmake` instead.
+
+On *OSX*, you need to install *OpenSSL* and declare the apropriate installation
+path inside the `Makefile` and type `make`.
+
+On *Linux*, PSC will use *Unix98* pseudo terminals, on other systems it will use *POSIX*
+pty's but that should be transparent to you. I once added *4.4BSD* pty and *SunOS*
+support back in the stone age for a particular reason, so it may or may not
+build even with *Solaris*.
 
 Usage
 -----
@@ -92,10 +112,17 @@ certain amout of data mangling, but in some situations it is not possible to rec
 Similar thing with `tmux`. You should avoid stacking pty handlers with PSC that
 mess/handle their incoming data too much.
 
-Demo
-----
 
-Theres a demo video on [![asciicast](https://asciinema.org/a/383043.svg)](https://asciinema.org/a/383043) that shows DNS lookups and SSH session forwarded across a UART to a Pi.
+SOCKS4 and SOCKS5 support
+-------------------------
 
-
+`pscl` also supports forwarding of TCP connections via *SOCKS4* (`-4 port`) and *SOCKS5*
+(`-5 port`). This sets up *port* as SOCKS port for TCP connections, so for instance you
+can browse remote networks from a portshell session without the need to open any other
+connection during a pentest. For *chrome*, *SOCKS4* must be used, as the PSC SOCKS implementation
+does not support resolving domain names on their own. Instead, it requires IPv4 or IPv6
+addresses to be passed along. Since *chrome* will set the *SOCKS5* protocol *address type*
+always to *domain name* (`0x03`) - even if an IP address is entered in the address bar -
+SOCKS5 is not usuable with *chrome*. But you can use *chrome* with *SOCKS4*, since this
+protocol only supports IPv4 addresses, not domain names.
 

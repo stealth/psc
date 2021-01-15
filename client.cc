@@ -1,7 +1,7 @@
 /*
  * This file is part of port shell crypter (psc).
  *
- * (C) 2006-2020 by Sebastian Krahmer,
+ * (C) 2006-2021 by Sebastian Krahmer,
  *                  sebastian [dot] krahmer [at] gmail [dot] com
  *
  * psc is free software: you can redistribute it and/or modify
@@ -34,6 +34,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
+#include <netinet/in.h>
 
 #include "net.h"
 #include "pty.h"
@@ -190,6 +191,24 @@ int proxy_loop()
 		fd2state[r].state = STATE_UDPSERVER;
 	}
 
+	if (config::socks5_port != -1) {
+		pfds[config::socks5_fd].fd = config::socks5_fd;
+		pfds[config::socks5_fd].events = POLLIN;
+
+		fd2state[config::socks5_fd].fd = config::socks5_fd;
+		fd2state[config::socks5_fd].rnode = "";
+		fd2state[config::socks5_fd].state = STATE_SOCKS5_ACCEPT;
+	}
+
+	if (config::socks4_port != -1) {
+		pfds[config::socks4_fd].fd = config::socks4_fd;
+		pfds[config::socks4_fd].events = POLLIN;
+
+		fd2state[config::socks4_fd].fd = config::socks4_fd;
+		fd2state[config::socks4_fd].rnode = "";
+		fd2state[config::socks4_fd].state = STATE_SOCKS4_ACCEPT;
+	}
+
 	// Build a local address for sending reply UDP dgrams. Only the dst port is unknown yet
 	// and will be constructed from the ID part of the IP/port/ID header
 	struct sockaddr_in lsin;
@@ -310,10 +329,35 @@ int proxy_loop()
 					fd2state[afd].time = now;
 					fd2state[afd].obuf.clear();
 
-					nodes2sock[fd2state[afd].rnode] = afd;
+					tcp_nodes2sock[fd2state[afd].rnode] = afd;
 
 					pfds[pt.master()].events |= POLLOUT;
 					fd2state[pt.master()].obuf += psc->possibly_b64encrypt("C:T:N:", fd2state[afd].rnode);	// trigger tcp_connect() on remote side
+
+				} else if (fd2state[i].state == STATE_SOCKS5_ACCEPT) {
+					if ((afd = accept(i, nullptr, nullptr)) < 0)
+						continue;
+
+					pfds[afd].fd = afd;
+					pfds[afd].events = POLLIN;		// wait for SOCKS5 proto requests
+					fd2state[afd].fd = afd;
+					fd2state[afd].rnode = "";
+					fd2state[afd].state = STATE_SOCKS5_AUTH1;
+					fd2state[afd].time = now;
+					fd2state[afd].obuf.clear();
+
+				} else if (fd2state[i].state == STATE_SOCKS4_ACCEPT) {
+					if ((afd = accept(i, nullptr, nullptr)) < 0)
+						continue;
+
+					pfds[afd].fd = afd;
+					pfds[afd].events = POLLIN;		// wait for SOCKS4 proto requests
+					fd2state[afd].fd = afd;
+					fd2state[afd].rnode = "";
+					fd2state[afd].state = STATE_SOCKS4_AUTH;
+					fd2state[afd].time = now;
+					fd2state[afd].obuf.clear();
+
 				} else if (fd2state[i].state == STATE_CONNECTED) {
 					if ((r = recv(i, sbuf, sizeof(sbuf), 0)) <= 0) {
 						close(i);
@@ -322,7 +366,7 @@ int proxy_loop()
 						fd2state[i].state = STATE_INVALID;
 						fd2state[i].fd = -1;
 						fd2state[i].obuf.clear();
-						nodes2sock.erase(fd2state[i].rnode);
+						tcp_nodes2sock.erase(fd2state[i].rnode);
 
 						pfds[pt.master()].events |= POLLOUT;
 						fd2state[pt.master()].obuf += psc->possibly_b64encrypt("C:T:F:", fd2state[i].rnode);	// signal finished connection via PTY to remote
@@ -331,6 +375,110 @@ int proxy_loop()
 					pfds[pt.master()].events |= POLLOUT;
 					fd2state[pt.master()].obuf += psc->possibly_b64encrypt("C:T:S:", fd2state[i].rnode + string(sbuf, r));
 					fd2state[i].time = now;
+
+				} else if (fd2state[i].state == STATE_SOCKS4_AUTH) {
+
+					socks4_req *s4r = reinterpret_cast<socks4_req *>(sbuf);
+
+					// expect SOCKS4 request and send positive response
+					if ((r = recv(i, sbuf, sizeof(sbuf), 0)) <= 0 || sbuf[0] != 4) {
+						close(i);
+						pfds[i].fd = -1;
+						pfds[i].events = 0;
+						fd2state[i].state = STATE_INVALID;
+						fd2state[i].fd = -1;
+						fd2state[i].obuf.clear();
+						continue;
+					}
+
+					s4r->ver = 0;
+					s4r->cmd = 0x5a;			// request granted
+					fd2state[i].obuf += string(sbuf, 8);	// orig req w/o ID
+
+					char dst[128] = {0};
+					uint16_t rport = 0;
+
+					inet_ntop(AF_INET, &s4r->dst, dst, sizeof(dst) - 1);
+					rport = ntohs(s4r->dport);
+
+					// Now that we know where connection is going to, we can build
+					// IP/port/ID header
+					char hdr[128] = {0};
+					snprintf(hdr, sizeof(hdr) - 1, "%s/%d/%d/", dst, rport, i);
+
+					fd2state[i].rnode = hdr;
+					fd2state[i].state = STATE_CONNECT;
+					fd2state[i].time = now;
+
+					tcp_nodes2sock[fd2state[i].rnode] = i;
+
+					pfds[pt.master()].events |= POLLOUT;
+					fd2state[pt.master()].obuf += psc->possibly_b64encrypt("C:T:N:", fd2state[afd].rnode);	// trigger tcp_connect() on remote side
+
+					pfds[i].events = POLLOUT;	// don't take data until remote site established connection, so *only* POLLOUT
+
+				} else if (fd2state[i].state == STATE_SOCKS5_AUTH1) {
+
+					// expect SOCKS5 auth request (none) and send positive response
+					if ((r = recv(i, sbuf, sizeof(sbuf), 0)) != 3 || sbuf[0] != 5) {
+						close(i);
+						pfds[i].fd = -1;
+						pfds[i].events = 0;
+						fd2state[i].state = STATE_INVALID;
+						fd2state[i].fd = -1;
+						fd2state[i].obuf.clear();
+						continue;
+					}
+					pfds[i].events |= POLLOUT;
+					fd2state[i].state = STATE_SOCKS5_AUTH2;
+					fd2state[i].obuf += string("\x05\x00", 2);
+					fd2state[i].time = now;
+				} else if (fd2state[i].state == STATE_SOCKS5_AUTH2) {
+
+					memset(sbuf, 0, sizeof(sbuf));
+					socks5_req *s5r = reinterpret_cast<socks5_req *>(sbuf);
+
+					// expect SOCKS5 connect request
+					if ((r = recv(i, sbuf, sizeof(sbuf), 0)) < 10 ||
+					    s5r->vers != 5 ||				// wrong version?
+					    (s5r->atype != 1 && s5r->atype != 4) ||	// IPv4 or IPv6
+					    s5r->cmd != 1) {				// not a TCP-connect?
+						s5r->cmd = 0x08;			// atype not supported
+						fd2state[i].obuf += string(sbuf, r);
+						pfds[i].events |= POLLOUT;		// out and expect next request
+						continue;
+					}
+
+					char dst[128] = {0};
+					uint16_t rport = 0;
+
+					if (s5r->atype == 1) {
+						inet_ntop(AF_INET, &s5r->v4.dst, dst, sizeof(dst) - 1);
+						rport = ntohs(s5r->v4.dport);
+					} else {
+						inet_ntop(AF_INET6, &s5r->v6.dst, dst, sizeof(dst) - 1);
+						rport = ntohs(s5r->v6.dport);
+					}
+
+					// Now that we know where connection is going to, we can build
+					// IP/port/ID header
+					char hdr[128] = {0};
+					snprintf(hdr, sizeof(hdr) - 1, "%s/%d/%d/", dst, rport, i);
+
+					fd2state[i].rnode = hdr;
+					fd2state[i].state = STATE_CONNECT;
+					fd2state[i].time = now;
+
+					tcp_nodes2sock[fd2state[i].rnode] = i;
+
+					pfds[pt.master()].events |= POLLOUT;
+					fd2state[pt.master()].obuf += psc->possibly_b64encrypt("C:T:N:", fd2state[afd].rnode);	// trigger tcp_connect() on remote side
+
+					s5r->cmd = 0;	// response status to socks5 client
+					fd2state[i].obuf += string(sbuf, r);
+
+					pfds[i].events = POLLOUT;	// don't take data until remote site established connection, so *only* POLLOUT
+
 				} else if (fd2state[i].state == STATE_UDPSERVER) {
 
 					// Always listens on 127.0.0.1, so this is always AF_INET
@@ -350,7 +498,7 @@ int proxy_loop()
 					fd2state[pt.master()].obuf += psc->possibly_b64encrypt("C:U:S:", fd2state[i].rnode + id + string(sbuf, r));
 					fd2state[i].time = now;
 
-					nodes2sock[fd2state[i].rnode + id] = i;
+					udp_nodes2sock[fd2state[i].rnode + id] = i;
 				}
 			} else if (pfds[i].revents & POLLOUT) {
 				pfds[i].revents = 0;
@@ -372,7 +520,9 @@ int proxy_loop()
 					}
 
 					fd2state[i].obuf.erase(0, r);
-				} else if (fd2state[i].state == STATE_CONNECTED) {
+				} else if (fd2state[i].state == STATE_CONNECT ||	// for the SOCKS4/5 case: reply with conn success
+					   fd2state[i].state == STATE_SOCKS5_AUTH2 ||	// for the SOCKS5 case: reply for auth success
+				           fd2state[i].state == STATE_CONNECTED) {
 					if ((r = write(i, fd2state[i].obuf.c_str(), fd2state[i].obuf.size())) <= 0) {
 						close(i);
 						pfds[i].fd = -1;
@@ -380,7 +530,7 @@ int proxy_loop()
 						fd2state[i].state = STATE_INVALID;
 						fd2state[i].fd = -1;
 						fd2state[i].obuf.clear();
-						nodes2sock.erase(fd2state[i].rnode);
+						tcp_nodes2sock.erase(fd2state[i].rnode);
 
 						pfds[pt.master()].events |= POLLOUT;
 						fd2state[pt.master()].obuf += psc->possibly_b64encrypt("C:T:F:", fd2state[i].rnode);	// signal finished connection via PTY to remote
@@ -432,12 +582,12 @@ int main(int argc, char **argv)
 	if (sigaction(SIGWINCH, &sa, NULL) < 0)
 		die("pscl: sigaction");
 
-	printf("\nPortShellCrypter [pscl] v0.60 (C) 2006-2020 stealth -- github.com/stealth/psc\n\n");
+	printf("\nPortShellCrypter [pscl] v0.61 (C) 2006-2021 stealth -- github.com/stealth/psc\n\n");
 
 	int c = -1;
 	char lport[16] = {0}, ip[128] = {0}, rport[16] = {0};
 
-	while ((c = getopt(argc, argv, "T:U:")) != -1) {
+	while ((c = getopt(argc, argv, "T:U:5:4:")) != -1) {
 		switch (c) {
 		case 'T':
 			sscanf(optarg, "%15[0-9]:[%127[^]]]:%15[0-9]", lport, ip, rport);
@@ -448,6 +598,20 @@ int main(int argc, char **argv)
 			sscanf(optarg, "%15[0-9]:[%127[^]]]:%15[0-9]", lport, ip, rport);
 			config::udp_listens[lport] = string(ip) + "/" + string(rport) + "/";
 			printf("pscl: set up local UDP port %s to proxy to %s:%s @ remote.\n", lport, ip, rport);
+			break;
+		case '4':
+			if (config::socks4_fd == -1) {
+				config::socks4_port = strtoul(optarg, nullptr, 10);
+				if ((config::socks4_fd = tcp_listen("127.0.0.1", optarg)) > 0)
+					printf("pscl: set up SOCKS4 port on %s\n", optarg);
+			}
+			break;
+		case '5':
+			if (config::socks5_fd == -1) {
+				config::socks5_port = strtoul(optarg, nullptr, 10);
+				if ((config::socks5_fd = tcp_listen("127.0.0.1", optarg)) > 0)
+					printf("pscl: set up SOCKS5 port on %s\n", optarg);
+			}
 			break;
 		}
 	}

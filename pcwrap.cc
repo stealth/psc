@@ -139,7 +139,7 @@ int pc_wrap::reset()
 	RAND_bytes(tmp, sizeof(tmp));
 	b64_encode(reinterpret_cast<char *>(tmp), sizeof(tmp), iv);
 
-#if (OPENSSL_VERSION_NUMBER < 0x10100000L)
+#if (OPENSSL_VERSION_NUMBER <= 0x10100000L)
 	EVP_CIPHER_CTX_cleanup(r_ctx);
 	EVP_CIPHER_CTX_cleanup(w_ctx);
 
@@ -163,7 +163,7 @@ int pc_wrap::reset()
 pc_wrap::~pc_wrap()
 {
 
-#if (OPENSSL_VERSION_NUMBER < 0x10100000L)
+#if (OPENSSL_VERSION_NUMBER <= 0x10100000L)
 	EVP_CIPHER_CTX_cleanup(r_ctx);
 	EVP_CIPHER_CTX_cleanup(w_ctx);
 
@@ -292,7 +292,7 @@ int pc_wrap::read(bool nosys, string &buf, string &ext_cmd, int &starttls)
 
 		// normal data?
 		if (s.find("D:0:") == 0) {
-			buf = move(s.substr(4));
+			buf = s.substr(4);
 		// window-size command
 		} else if (s.find("C:WS:") == 0) {
 			wsize_signalled = 1;

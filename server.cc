@@ -1,7 +1,7 @@
 /*
  * This file is part of port shell crypter (psc).
  *
- * (C) 2006-2020 by Sebastian Krahmer,
+ * (C) 2006-2021 by Sebastian Krahmer,
  *                  sebastian [dot] krahmer [at] gmail [dot] com
  *
  * psc is free software: you can redistribute it and/or modify
@@ -250,7 +250,7 @@ int proxy_loop()
 						fd2state[i].state = STATE_INVALID;
 						fd2state[i].fd = -1;
 						fd2state[i].obuf.clear();
-						nodes2sock.erase(fd2state[i].rnode);
+						tcp_nodes2sock.erase(fd2state[i].rnode);
 
 						pfds[1].events |= POLLOUT;
 						fd2state[1].obuf += psc.possibly_b64encrypt("C:T:F:", fd2state[i].rnode);	// signal finished connection via stdout to remote
@@ -292,7 +292,7 @@ int proxy_loop()
 						fd2state[i].state = STATE_INVALID;
 						fd2state[i].fd = -1;
 						fd2state[i].obuf.clear();
-						nodes2sock.erase(fd2state[i].rnode);
+						tcp_nodes2sock.erase(fd2state[i].rnode);
 
 						pfds[1].events |= POLLOUT;
 						fd2state[1].obuf += psc.possibly_b64encrypt("C:T:F:", fd2state[i].rnode);	// signal finished connection via stdout to remote
@@ -314,7 +314,7 @@ int proxy_loop()
 						fd2state[i].state = STATE_INVALID;
 						fd2state[i].fd = -1;
 						fd2state[i].obuf.clear();
-						nodes2sock.erase(fd2state[i].rnode);
+						tcp_nodes2sock.erase(fd2state[i].rnode);
 
 						pfds[1].events |= POLLOUT;
 						fd2state[1].obuf += psc.possibly_b64encrypt("C:T:F:", fd2state[i].rnode);	// signal finished connection via stdout to remote
@@ -354,7 +354,7 @@ int main(int argc, char **argv)
 	setbuffer(stdout, NULL, 0);
 	setbuffer(stderr, NULL, 0);
 
-	printf("\nPortShellCrypter [pscr] v0.60 (C) 2006-2020 stealth -- github.com/stealth/psc\n\n");
+	printf("\nPortShellCrypter [pscr] v0.61 (C) 2006-2021 stealth -- github.com/stealth/psc\n\n");
 
 	proxy_loop();
 

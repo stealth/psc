@@ -1,3 +1,23 @@
+/*
+ * This file is part of port shell crypter (psc).
+ *
+ * (C) 2006-2021 by Sebastian Krahmer,
+ *                  sebastian [dot] krahmer [at] gmail [dot] com
+ *
+ * psc is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * psc is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with psc.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
 #ifndef psc_misc_h
 #define psc_misc_h
 
@@ -33,6 +53,11 @@ enum {
 	STATE_CLOSING		=	7,
 	STATE_UDPCLIENT		=	8,
 	STATE_UDPSERVER		=	9,
+	STATE_SOCKS5_ACCEPT	=	10,
+	STATE_SOCKS5_AUTH1	=	11,
+	STATE_SOCKS5_AUTH2	=	12,
+	STATE_SOCKS4_ACCEPT	=	13,
+	STATE_SOCKS4_AUTH	=	14,
 
 	CLOSING_TIME		=	10,
 	CONNECT_TIME		=	30,
@@ -59,6 +84,8 @@ struct state {
 namespace config {
 
 extern std::map<std::string, std::string> tcp_listens, udp_listens;
+
+extern int socks5_port, socks5_fd, socks4_port, socks4_fd;
 
 }
 

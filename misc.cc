@@ -1,7 +1,7 @@
 /*
  * This file is part of port shell crypter (psc).
  *
- * (C) 2006-2020 by Sebastian Krahmer,
+ * (C) 2006-2021 by Sebastian Krahmer,
  *                  sebastian [dot] krahmer [at] gmail [dot] com
  *
  * psc is free software: you can redistribute it and/or modify
@@ -39,6 +39,8 @@ using namespace std;
 namespace config {
 
 map<string, string> tcp_listens, udp_listens;
+
+int socks5_port = -1, socks5_fd = -1, socks4_port = -1, socks4_fd = -1;
 
 }
 
