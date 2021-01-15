@@ -91,6 +91,8 @@ IPv4 software to IPv6, since you always connect to `127.0.0.1` on the local side
 
 You can pass multiple `-T` and `-U` parameters. If you lost track if your session
 is already e2e encrypted, you can type `Ctrl-C` and `pscl` will tell you.
+*Be careful to not start sessions on the remote side that require Ctrl-C to finish
+(like tcpdump) since pscl will override it. I might need to change that in future.*
 
 PSC is also useful if you want to use tor from a remote SSH shell, where you
 can forward the socks5 and the DNS port to the remote hosts `127.0.0.1` address.
