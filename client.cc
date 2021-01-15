@@ -403,7 +403,7 @@ int proxy_loop()
 
 					// Now that we know where connection is going to, we can build
 					// IP/port/ID header
-					char hdr[128] = {0};
+					char hdr[256] = {0};
 					snprintf(hdr, sizeof(hdr) - 1, "%s/%d/%d/", dst, rport, i);
 
 					fd2state[i].rnode = hdr;
@@ -462,7 +462,7 @@ int proxy_loop()
 
 					// Now that we know where connection is going to, we can build
 					// IP/port/ID header
-					char hdr[128] = {0};
+					char hdr[256] = {0};
 					snprintf(hdr, sizeof(hdr) - 1, "%s/%d/%d/", dst, rport, i);
 
 					fd2state[i].rnode = hdr;
