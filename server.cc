@@ -92,11 +92,11 @@ int proxy_loop()
 	sa.sa_handler = sig_chld;
 	sa.sa_flags = SA_RESTART;
 
-	if (sigaction(SIGCHLD, &sa, NULL) < 0)
+	if (sigaction(SIGCHLD, &sa, nullptr) < 0)
 		die("pscr: sigaction");
 
 	if ((pid = fork()) == 0) {
-		char *a[] = {getenv("SHELL"), NULL};
+		char *a[] = {getenv("SHELL"), nullptr};
 		extern char **environ;
 
 		if (!*a) {
@@ -350,11 +350,11 @@ int proxy_loop()
 
 int main(int argc, char **argv)
 {
-	setbuffer(stdin, NULL, 0);
-	setbuffer(stdout, NULL, 0);
-	setbuffer(stderr, NULL, 0);
+	setbuffer(stdin, nullptr, 0);
+	setbuffer(stdout, nullptr, 0);
+	setbuffer(stderr, nullptr, 0);
 
-	printf("\nPortShellCrypter [pscr] v0.61 (C) 2006-2021 stealth -- github.com/stealth/psc\n\n");
+	printf("\nPortShellCrypter [pscr] v0.62 (C) 2006-2021 stealth -- github.com/stealth/psc\n\n");
 
 	proxy_loop();
 

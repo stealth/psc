@@ -61,7 +61,7 @@ void sig_chld(int)
 }
 
 
-void sig_int(int)
+void sig_usr1(int)
 {
 	if (!psc)
 		return;
@@ -107,7 +107,7 @@ int proxy_loop()
 	cfmakeraw(&tattr);
 	tattr.c_cc[VMIN] = 1;
 	tattr.c_cc[VTIME] = 0;
-	tattr.c_lflag |= ISIG;
+	tattr.c_lflag &= ~ISIG;
 
 	//tattr.c_lflag &= ~ECHO;
 
@@ -116,7 +116,7 @@ int proxy_loop()
 		die("pscl: tcsetattr");
 
 	if ((pid = fork()) == 0) {
-		char *a[] = {getenv("SHELL"), NULL};
+		char *a[] = {getenv("SHELL"), nullptr};
 		extern char **environ;
 
 		if (!*a) {
@@ -223,7 +223,7 @@ int proxy_loop()
 
 		memset(sbuf, 0, sizeof(sbuf));
 
-		if (winsize_changed) {
+		if (winsize_changed && psc->is_crypted()) {
 			fd2state[pt.master()].obuf += psc->wsize_cmd();
 			pfds[pt.master()].events |= POLLOUT;
 			winsize_changed = 0;
@@ -567,22 +567,28 @@ int main(int argc, char **argv)
 	sa.sa_handler = sig_chld;
 	sa.sa_flags = SA_RESTART;
 
-	if (sigaction(SIGCHLD, &sa, NULL) < 0)
+	if (sigaction(SIGCHLD, &sa, nullptr) < 0)
 		die("pscl: sigaction");
 
 	memset(&sa, 0, sizeof(sa));
 	sa.sa_flags = SA_RESTART;
-	sa.sa_handler = sig_int;
-	if (sigaction(SIGINT, &sa, NULL) < 0)
+	sa.sa_handler = sig_usr1;
+	if (sigaction(SIGUSR1, &sa, nullptr) < 0)
 		die("pscl: sigaction");
 
 	memset(&sa, 0, sizeof(sa));
 	sa.sa_handler = sig_win;
 	sa.sa_flags = SA_RESTART;
-	if (sigaction(SIGWINCH, &sa, NULL) < 0)
+	if (sigaction(SIGWINCH, &sa, nullptr) < 0)
 		die("pscl: sigaction");
 
-	printf("\nPortShellCrypter [pscl] v0.61 (C) 2006-2021 stealth -- github.com/stealth/psc\n\n");
+	sa.sa_handler = SIG_IGN;
+	if (sigaction(SIGINT, &sa, nullptr) < 0 || sigaction(SIGQUIT, &sa, nullptr))
+		die("pscl: sigaction");
+
+
+
+	printf("\nPortShellCrypter [pscl] v0.62 (C) 2006-2021 stealth -- github.com/stealth/psc\n\n");
 
 	int c = -1;
 	char lport[16] = {0}, ip[128] = {0}, rport[16] = {0};
