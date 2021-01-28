@@ -562,6 +562,13 @@ int proxy_loop()
 
 int main(int argc, char **argv)
 {
+	printf("\nPortShellCrypter [pscl] v0.62 (C) 2006-2021 stealth -- github.com/stealth/psc\n\n");
+
+	if (!getenv("SHELL")) {
+		printf("pscl: No $SHELL set in environment. Exiting.\n");
+		exit(1);
+	}
+
 	struct sigaction sa;
 	memset(&sa, 0, sizeof(sa));
 	sa.sa_handler = sig_chld;
@@ -585,10 +592,6 @@ int main(int argc, char **argv)
 	sa.sa_handler = SIG_IGN;
 	if (sigaction(SIGINT, &sa, nullptr) < 0 || sigaction(SIGQUIT, &sa, nullptr))
 		die("pscl: sigaction");
-
-
-
-	printf("\nPortShellCrypter [pscl] v0.62 (C) 2006-2021 stealth -- github.com/stealth/psc\n\n");
 
 	int c = -1;
 	char lport[16] = {0}, ip[128] = {0}, rport[16] = {0};

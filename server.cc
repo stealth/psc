@@ -356,6 +356,11 @@ int main(int argc, char **argv)
 
 	printf("\nPortShellCrypter [pscr] v0.62 (C) 2006-2021 stealth -- github.com/stealth/psc\n\n");
 
+	if (!getenv("SHELL")) {
+		printf("pscr: No $SHELL set in environment. Exiting.\n");
+		exit(1);
+	}
+
 	proxy_loop();
 
 	return 0;
