@@ -113,6 +113,11 @@ certain amout of data mangling, but in some situations it is not possible to rec
 Similar thing with `tmux`. You should avoid stacking pty handlers with PSC that
 mess/handle their incoming data too much.
 
+The `SHELL` environment variable needs to be set for both `pscl` and `pscr` in order
+for PSC to know which shell to execute on the pty. `SHELL` is set in most environments
+by default, but in case it isn't, PSC needs to be executed like `SHELL=/bin/bash pscl`
+etc.
+
 
 SOCKS4 and SOCKS5 support
 -------------------------
