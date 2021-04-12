@@ -189,14 +189,21 @@ int proxy_loop()
 				close(i);
 				fd2state[i].fd = -1;
 				fd2state[i].state = STATE_INVALID;
+				fd2state[i].obuf.clear();
 				pfds[i].fd = -1;
+				pfds[i].events = 0;
 				continue;
 			}
 
-			if (pfds[i].revents & (POLLERR|POLLHUP)) {
+			if (pfds[i].revents & (POLLERR|POLLHUP|POLLNVAL)) {
 				if (fd2state[i].state == STATE_STDOUT || fd2state[i].state == STATE_PTY) {
 					breakout = 1;
 					break;
+				}
+				if (fd2state[i].state == STATE_CONNECTED || fd2state[i].state == STATE_CONNECT) {
+					pfds[1].events |= POLLOUT;
+					fd2state[1].obuf += psc.possibly_b64encrypt("C:T:F:", fd2state[i].rnode);     // signal finished connection to remote
+					tcp_nodes2sock.erase(fd2state[i].rnode);
 				}
 
 				close(i);

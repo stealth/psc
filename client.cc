@@ -252,16 +252,30 @@ int proxy_loop()
 
 			if ((fd2state[i].state == STATE_CLOSING && (now - fd2state[i].time) > CLOSING_TIME) ||
 			    (fd2state[i].state == STATE_CONNECT && (now - fd2state[i].time) > CONNECT_TIME)) {
+
+				if (fd2state[i].state == STATE_CONNECT) {
+					pfds[pt.master()].events |= POLLOUT;
+					fd2state[pt.master()].obuf += psc->possibly_b64encrypt("C:T:F:", fd2state[i].rnode);     // signal interrupted connection to remote
+					tcp_nodes2sock.erase(fd2state[i].rnode);
+				}
+
 				close(i);
 				fd2state[i].fd = -1;
 				fd2state[i].state = STATE_INVALID;
 				pfds[i].fd = -1;
+				pfds[i].events = 0;
 				continue;
 			}
 
-			if (pfds[i].revents & (POLLERR|POLLHUP)) {
+			if (pfds[i].revents & (POLLERR|POLLHUP|POLLNVAL)) {
 				if (fd2state[i].state == STATE_STDIN || fd2state[i].state == STATE_PTY)
 					die("pscl: TTY hangup");
+				if (fd2state[i].state == STATE_CONNECTED || fd2state[i].state == STATE_CONNECT) {
+					pfds[pt.master()].events |= POLLOUT;
+					fd2state[pt.master()].obuf += psc->possibly_b64encrypt("C:T:F:", fd2state[i].rnode);     // signal finished connection to remote
+					tcp_nodes2sock.erase(fd2state[i].rnode);
+				}
+
 				close(i);
 				fd2state[i].fd = -1;
 				fd2state[i].state = STATE_INVALID;
