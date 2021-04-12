@@ -234,7 +234,7 @@ int proxy_loop()
 						psc.check_wsize(pt.master());
 
 						if (ext_cmd.size() > 0)
-							cmd_handler(ext_cmd, fd2state, pfds);
+							cmd_handler(ext_cmd, fd2state, pfds, NETCMD_SEND_ALLOW);
 						else if (tbuf.size() > 0) {
 							fd2state[pt.master()].time = now;
 							fd2state[pt.master()].obuf += tbuf;

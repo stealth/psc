@@ -413,7 +413,7 @@ int proxy_loop()
 					tcp_nodes2sock[fd2state[i].rnode] = i;
 
 					pfds[pt.master()].events |= POLLOUT;
-					fd2state[pt.master()].obuf += psc->possibly_b64encrypt("C:T:N:", fd2state[afd].rnode);	// trigger tcp_connect() on remote side
+					fd2state[pt.master()].obuf += psc->possibly_b64encrypt("C:T:N:", fd2state[i].rnode);	// trigger tcp_connect() on remote side
 
 					pfds[i].events = POLLOUT;	// don't take data until remote site established connection, so *only* POLLOUT
 
@@ -472,7 +472,7 @@ int proxy_loop()
 					tcp_nodes2sock[fd2state[i].rnode] = i;
 
 					pfds[pt.master()].events |= POLLOUT;
-					fd2state[pt.master()].obuf += psc->possibly_b64encrypt("C:T:N:", fd2state[afd].rnode);	// trigger tcp_connect() on remote side
+					fd2state[pt.master()].obuf += psc->possibly_b64encrypt("C:T:N:", fd2state[i].rnode);	// trigger tcp_connect() on remote side
 
 					s5r->cmd = 0;	// response status to socks5 client
 					fd2state[i].obuf += string(sbuf, r);
