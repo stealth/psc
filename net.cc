@@ -235,7 +235,9 @@ int cmd_handler(const string &cmd, state *fd2state, pollfd *pfds, uint32_t flags
 
 	} else if (cmd.find("C:U:S:") == 0 || cmd.find("C:U:R:") == 0) {
 		auto it = udp_nodes2sock.find(node);
-		if (it == udp_nodes2sock.end() && (flags & NETCMD_SEND_ALLOW)) {
+		if (it == udp_nodes2sock.end()) {
+			if (!(flags & NETCMD_SEND_ALLOW))
+				return 0;
 			if ((sock = udp_connect(host, port)) < 0)
 				return -1;
 			udp_nodes2sock[node] = sock;

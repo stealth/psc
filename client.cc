@@ -576,7 +576,7 @@ int proxy_loop()
 
 int main(int argc, char **argv)
 {
-	printf("\nPortShellCrypter [pscl] v0.62 (C) 2006-2021 stealth -- github.com/stealth/psc\n\n");
+	printf("\nPortShellCrypter [pscl] v0.63 (C) 2006-2021 stealth -- github.com/stealth/psc\n\n");
 
 	if (!getenv("SHELL")) {
 		printf("pscl: No $SHELL set in environment. Exiting.\n");
