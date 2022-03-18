@@ -23,7 +23,7 @@ ifeq ($(shell uname), Linux)
 DEFS+=-DHAVE_UNIX98
 endif
 
-all: pscl pscr
+all: pscl pscr pscsh
 
 clean:
 	rm -f *.o
@@ -33,6 +33,9 @@ pscl: misc.o client.o pcwrap.o pty.o pty98.o net.o
 
 pscr: misc.o server.o pty.o pty98.o pcwrap.o net.o
 	$(CXX) $^ -o $@ $(LIBS)
+
+pscsh: pscsh.o
+	$(CXX) $^ -o $@
 
 pcwrap.o: pcwrap.cc
 	$(CXX) $(DEFS) $(CXXFLAGS) $^ -o $@
@@ -53,5 +56,8 @@ pty98.o: pty98.cc
 	$(CXX) $(DEFS) $(CXXFLAGS) $^ -o $@
 
 net.o: net.cc
+	$(CXX) $(DEFS) $(CXXFLAGS) $^ -o $@
+
+pscsh.o: pscsh.cc
 	$(CXX) $(DEFS) $(CXXFLAGS) $^ -o $@
 

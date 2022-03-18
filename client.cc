@@ -209,13 +209,23 @@ int proxy_loop()
 		fd2state[config::socks4_fd].state = STATE_SOCKS4_ACCEPT;
 	}
 
+	if (config::script_sock != -1) {
+		pfds[config::script_sock].fd = config::script_sock;
+		pfds[config::script_sock].events = POLLIN;
+
+		fd2state[config::script_sock].fd = config::script_sock;
+		fd2state[config::script_sock].rnode = "";
+		fd2state[config::script_sock].state = STATE_SCRIPT_ACCEPT;
+	}
+
+
 	// Build a local address for sending reply UDP dgrams. Only the dst port is unknown yet
 	// and will be constructed from the ID part of the IP/port/ID header
 	struct sockaddr_in lsin;
 	lsin.sin_family = AF_INET;
 	inet_pton(AF_INET, "127.0.0.1", &lsin.sin_addr);
 
-	int max_fd = rl.rlim_cur - 1;
+	int max_fd = rl.rlim_cur - 1, script_fd = -1;
 
 	string ext_cmd = "", tbuf = "";
 
@@ -276,6 +286,11 @@ int proxy_loop()
 					tcp_nodes2sock.erase(fd2state[i].rnode);
 				}
 
+				if (fd2state[i].state == STATE_SCRIPT_IO) {
+					pfds[0].events |= POLLIN;		// reactivate stdin
+					pfds[config::script_sock].events |= POLLIN;
+				}
+
 				close(i);
 				fd2state[i].fd = -1;
 				fd2state[i].state = STATE_INVALID;
@@ -291,6 +306,7 @@ int proxy_loop()
 			if (pfds[i].revents & POLLIN) {
 				pfds[i].revents = 0;
 				if (fd2state[i].state == STATE_STDIN) {
+
 					if ((r = read(0, sbuf, sizeof(sbuf))) <= 0) {
 						if (errno == EINTR)
 							continue;
@@ -322,6 +338,13 @@ int proxy_loop()
 							fd2state[1].time = now;
 							fd2state[1].obuf += tbuf;
 							pfds[1].events |= POLLOUT;
+
+							// mirror to script sock if opened
+							if (script_fd >= 0) {
+								fd2state[script_fd].time = now;
+								fd2state[script_fd].obuf += tbuf;
+								pfds[script_fd].events |= POLLOUT;
+							}
 						}
 					} while (r == 1);
 
@@ -513,7 +536,44 @@ int proxy_loop()
 					fd2state[i].time = now;
 
 					udp_nodes2sock[fd2state[i].rnode + id] = i;
+
+				} else if (fd2state[i].state == STATE_SCRIPT_ACCEPT) {
+
+					if ((script_fd = accept(i, nullptr, nullptr)) < 0)
+						continue;
+
+					pfds[script_fd].fd = script_fd;
+
+					pfds[script_fd].events = POLLIN;
+					pfds[i].events = 0;			// block further connects to UNIX script socket
+					pfds[0].events = 0;			// block stdin typing during script processing
+
+					fd2state[script_fd].fd = script_fd;
+					fd2state[script_fd].rnode = "";
+					fd2state[script_fd].state = STATE_SCRIPT_IO;
+					fd2state[script_fd].time = now;
+					fd2state[script_fd].obuf.clear();
+
+				} else if (fd2state[i].state == STATE_SCRIPT_IO) {	// very similar to STDIN read
+
+					if ((r = read(i, sbuf, sizeof(sbuf))) <= 0) {
+						if (errno == EINTR)
+							continue;
+						close(i);
+						script_fd = -1;
+						pfds[i].fd = -1;
+						pfds[i].events = 0;
+						fd2state[i].state = STATE_INVALID;
+						fd2state[i].fd = -1;
+						fd2state[i].obuf.clear();
+						pfds[0].events |= POLLIN;		// reactivate stdin
+						pfds[config::script_sock].events |= POLLIN;
+						continue;
+					}
+					fd2state[pt.master()].obuf += psc->possibly_b64encrypt("D:0:", string(sbuf, r));
+					pfds[pt.master()].events |= POLLOUT;
 				}
+
 			} else if (pfds[i].revents & POLLOUT) {
 				pfds[i].revents = 0;
 				if (fd2state[i].state == STATE_STDOUT) {
@@ -533,6 +593,7 @@ int proxy_loop()
 							die(psc->why());
 					}
 
+					fd2state[i].time = now;
 					fd2state[i].obuf.erase(0, r);
 				} else if (fd2state[i].state == STATE_CONNECT ||	// for the SOCKS4/5 case: reply with conn success
 					   fd2state[i].state == STATE_SOCKS5_AUTH2 ||	// for the SOCKS5 case: reply for auth success
@@ -562,6 +623,26 @@ int proxy_loop()
 					fd2state[i].odgrams.pop_front();
 					fd2state[i].ulports.pop_front();
 					fd2state[i].time = now;
+
+				} else if (fd2state[i].state == STATE_SCRIPT_IO) {
+					if ((r = write(i, fd2state[i].obuf.c_str(), fd2state[i].obuf.size())) <= 0) {
+						if (errno == EINTR)
+							continue;
+
+						close(i);
+						script_fd = -1;
+						pfds[i].fd = -1;
+						pfds[i].events = 0;
+						fd2state[i].state = STATE_INVALID;
+						fd2state[i].fd = -1;
+						fd2state[i].obuf.clear();
+						pfds[0].events |= POLLIN;		// reactivate stdin
+						pfds[config::script_sock].events |= POLLIN;
+						continue;
+					}
+
+					fd2state[i].time = now;
+					fd2state[i].obuf.erase(0, r);
 				}
 
 				if (fd2state[i].obuf.empty() && fd2state[i].odgrams.empty())
@@ -610,7 +691,7 @@ int main(int argc, char **argv)
 	int c = -1;
 	char lport[16] = {0}, ip[128] = {0}, rport[16] = {0};
 
-	while ((c = getopt(argc, argv, "T:U:5:4:")) != -1) {
+	while ((c = getopt(argc, argv, "T:U:5:4:S:")) != -1) {
 		switch (c) {
 		case 'T':
 			sscanf(optarg, "%15[0-9]:[%127[^]]]:%15[0-9]", lport, ip, rport);
@@ -634,6 +715,12 @@ int main(int argc, char **argv)
 				config::socks5_port = strtoul(optarg, nullptr, 10);
 				if ((config::socks5_fd = tcp_listen("127.0.0.1", optarg)) > 0)
 					printf("pscl: set up SOCKS5 port on %s\n", optarg);
+			}
+			break;
+		case 'S':
+			if (config::script_sock == -1) {
+				if ((config::script_sock = unix_listen(optarg)) > 0)
+					printf("pscl: set up script socket on %s\n", optarg);;
 			}
 			break;
 		}

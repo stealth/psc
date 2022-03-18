@@ -41,6 +41,8 @@ int tcp_listen(const std::string &, const std::string &);
 
 int udp_listen(const std::string &, const std::string &);
 
+int unix_listen(const std::string &);
+
 int cmd_handler(const std::string &, state *, pollfd *, uint32_t flags = 0);
 
 struct socks5_req {

@@ -58,6 +58,8 @@ enum {
 	STATE_SOCKS5_AUTH2	=	12,
 	STATE_SOCKS4_ACCEPT	=	13,
 	STATE_SOCKS4_AUTH	=	14,
+	STATE_SCRIPT_ACCEPT	=	15,
+	STATE_SCRIPT_IO		=	16,
 
 	CLOSING_TIME		=	10,
 	CONNECT_TIME		=	30,
@@ -87,7 +89,7 @@ namespace config {
 
 extern std::map<std::string, std::string> tcp_listens, udp_listens;
 
-extern int socks5_port, socks5_fd, socks4_port, socks4_fd;
+extern int socks5_port, socks5_fd, socks4_port, socks4_fd, script_sock;
 
 }
 
