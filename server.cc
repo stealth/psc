@@ -189,14 +189,21 @@ int proxy_loop()
 				close(i);
 				fd2state[i].fd = -1;
 				fd2state[i].state = STATE_INVALID;
+				fd2state[i].obuf.clear();
 				pfds[i].fd = -1;
+				pfds[i].events = 0;
 				continue;
 			}
 
-			if (pfds[i].revents & (POLLERR|POLLHUP)) {
+			if (pfds[i].revents & (POLLERR|POLLHUP|POLLNVAL)) {
 				if (fd2state[i].state == STATE_STDOUT || fd2state[i].state == STATE_PTY) {
 					breakout = 1;
 					break;
+				}
+				if (fd2state[i].state == STATE_CONNECTED || fd2state[i].state == STATE_CONNECT) {
+					pfds[1].events |= POLLOUT;
+					fd2state[1].obuf += psc.possibly_b64encrypt("C:T:F:", fd2state[i].rnode);     // signal finished connection to remote
+					tcp_nodes2sock.erase(fd2state[i].rnode);
 				}
 
 				close(i);
@@ -234,7 +241,7 @@ int proxy_loop()
 						psc.check_wsize(pt.master());
 
 						if (ext_cmd.size() > 0)
-							cmd_handler(ext_cmd, fd2state, pfds);
+							cmd_handler(ext_cmd, fd2state, pfds, NETCMD_SEND_ALLOW);
 						else if (tbuf.size() > 0) {
 							fd2state[pt.master()].time = now;
 							fd2state[pt.master()].obuf += tbuf;
@@ -354,7 +361,7 @@ int main(int argc, char **argv)
 	setbuffer(stdout, nullptr, 0);
 	setbuffer(stderr, nullptr, 0);
 
-	printf("\nPortShellCrypter [pscr] v0.62 (C) 2006-2021 stealth -- github.com/stealth/psc\n\n");
+	printf("\nPortShellCrypter [pscr] v0.63 (C) 2006-2021 stealth -- github.com/stealth/psc\n\n");
 
 	if (!getenv("SHELL")) {
 		printf("pscr: No $SHELL set in environment. Exiting.\n");

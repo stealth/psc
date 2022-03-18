@@ -252,16 +252,30 @@ int proxy_loop()
 
 			if ((fd2state[i].state == STATE_CLOSING && (now - fd2state[i].time) > CLOSING_TIME) ||
 			    (fd2state[i].state == STATE_CONNECT && (now - fd2state[i].time) > CONNECT_TIME)) {
+
+				if (fd2state[i].state == STATE_CONNECT) {
+					pfds[pt.master()].events |= POLLOUT;
+					fd2state[pt.master()].obuf += psc->possibly_b64encrypt("C:T:F:", fd2state[i].rnode);     // signal interrupted connection to remote
+					tcp_nodes2sock.erase(fd2state[i].rnode);
+				}
+
 				close(i);
 				fd2state[i].fd = -1;
 				fd2state[i].state = STATE_INVALID;
 				pfds[i].fd = -1;
+				pfds[i].events = 0;
 				continue;
 			}
 
-			if (pfds[i].revents & (POLLERR|POLLHUP)) {
+			if (pfds[i].revents & (POLLERR|POLLHUP|POLLNVAL)) {
 				if (fd2state[i].state == STATE_STDIN || fd2state[i].state == STATE_PTY)
 					die("pscl: TTY hangup");
+				if (fd2state[i].state == STATE_CONNECTED || fd2state[i].state == STATE_CONNECT) {
+					pfds[pt.master()].events |= POLLOUT;
+					fd2state[pt.master()].obuf += psc->possibly_b64encrypt("C:T:F:", fd2state[i].rnode);     // signal finished connection to remote
+					tcp_nodes2sock.erase(fd2state[i].rnode);
+				}
+
 				close(i);
 				fd2state[i].fd = -1;
 				fd2state[i].state = STATE_INVALID;
@@ -413,7 +427,7 @@ int proxy_loop()
 					tcp_nodes2sock[fd2state[i].rnode] = i;
 
 					pfds[pt.master()].events |= POLLOUT;
-					fd2state[pt.master()].obuf += psc->possibly_b64encrypt("C:T:N:", fd2state[afd].rnode);	// trigger tcp_connect() on remote side
+					fd2state[pt.master()].obuf += psc->possibly_b64encrypt("C:T:N:", fd2state[i].rnode);	// trigger tcp_connect() on remote side
 
 					pfds[i].events = POLLOUT;	// don't take data until remote site established connection, so *only* POLLOUT
 
@@ -472,7 +486,7 @@ int proxy_loop()
 					tcp_nodes2sock[fd2state[i].rnode] = i;
 
 					pfds[pt.master()].events |= POLLOUT;
-					fd2state[pt.master()].obuf += psc->possibly_b64encrypt("C:T:N:", fd2state[afd].rnode);	// trigger tcp_connect() on remote side
+					fd2state[pt.master()].obuf += psc->possibly_b64encrypt("C:T:N:", fd2state[i].rnode);	// trigger tcp_connect() on remote side
 
 					s5r->cmd = 0;	// response status to socks5 client
 					fd2state[i].obuf += string(sbuf, r);
@@ -562,7 +576,7 @@ int proxy_loop()
 
 int main(int argc, char **argv)
 {
-	printf("\nPortShellCrypter [pscl] v0.62 (C) 2006-2021 stealth -- github.com/stealth/psc\n\n");
+	printf("\nPortShellCrypter [pscl] v0.63 (C) 2006-2021 stealth -- github.com/stealth/psc\n\n");
 
 	if (!getenv("SHELL")) {
 		printf("pscl: No $SHELL set in environment. Exiting.\n");

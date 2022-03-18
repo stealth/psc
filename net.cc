@@ -30,7 +30,8 @@
 #include <poll.h>
 #include <sys/types.h>
 #include <sys/socket.h>
-
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include "misc.h"
 #include "net.h"
 
@@ -93,7 +94,9 @@ int tcp_listen(const string &ip, const string &port)
 
 static int connect(int type, const string &ip, const string &port)
 {
-	int r = 0, sock_fd = -1;
+	int r = 0, sock_fd = -1, one = 1;
+	socklen_t len = sizeof(one);
+
 	addrinfo hint, *tai = nullptr;
 	memset(&hint, 0, sizeof(hint));
 	hint.ai_socktype = type;
@@ -105,6 +108,8 @@ static int connect(int type, const string &ip, const string &port)
 
 	if ((sock_fd = socket(ai->ai_family, type, 0)) < 0)
 		return -1;
+
+	setsockopt(sock_fd, IPPROTO_TCP, TCP_NODELAY, &one, len);
 
 	int flags = fcntl(sock_fd, F_GETFL);
 	fcntl(sock_fd, F_SETFL, flags|O_NONBLOCK);
@@ -142,7 +147,7 @@ static int tcp_connect(const string &ip, const string &port)
  *
  */
 
-int cmd_handler(const string &cmd, state *fd2state, pollfd *pfds)
+int cmd_handler(const string &cmd, state *fd2state, pollfd *pfds, uint32_t flags)
 {
 	char C[16] = {0}, proto[16] = {0}, op[16] = {0}, host[128] = {0}, port[16] = {0}, id[16] = {0};
 	int sock = -1;
@@ -158,7 +163,7 @@ int cmd_handler(const string &cmd, state *fd2state, pollfd *pfds)
 		return -1;
 
 	// open new non-blocking connection
-	if (cmd.find("C:T:N:") == 0) {
+	if (cmd.find("C:T:N:") == 0 && (flags & NETCMD_SEND_ALLOW)) {
 		if ((sock = tcp_connect(host, port)) < 0)
 			return -1;
 
@@ -215,7 +220,9 @@ int cmd_handler(const string &cmd, state *fd2state, pollfd *pfds)
 		fd2state[sock].ulports.clear();
 		fd2state[sock].time = time(nullptr);
 
-	// send or receive data
+	// Send or receive data. No NETCMD_SEND_ALLOW check, since the node will not be in
+	// the tcp_nodes2sock map in the first place, as there was no tcp_connect() and no map
+	// insertion.
 	} else if (cmd.find("C:T:S:") == 0 || cmd.find("C:T:R:") == 0) {
 		auto it = tcp_nodes2sock.find(node);
 		if (it == tcp_nodes2sock.end())
@@ -229,6 +236,8 @@ int cmd_handler(const string &cmd, state *fd2state, pollfd *pfds)
 	} else if (cmd.find("C:U:S:") == 0 || cmd.find("C:U:R:") == 0) {
 		auto it = udp_nodes2sock.find(node);
 		if (it == udp_nodes2sock.end()) {
+			if (!(flags & NETCMD_SEND_ALLOW))
+				return 0;
 			if ((sock = udp_connect(host, port)) < 0)
 				return -1;
 			udp_nodes2sock[node] = sock;

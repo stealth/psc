@@ -64,7 +64,9 @@ enum {
 	UDP_CLOSING_TIME	=	120,
 
 	MTU			=	1500,
-	BLOCK_SIZE		=	2*MTU
+	BLOCK_SIZE		=	2*MTU,
+
+	NETCMD_SEND_ALLOW	=	1
 };
 
 struct state {
