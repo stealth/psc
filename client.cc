@@ -703,14 +703,16 @@ int main(int argc, char **argv)
 	while ((c = getopt(argc, argv, "T:U:5:4:S:h")) != -1) {
 		switch (c) {
 		case 'T':
-			sscanf(optarg, "%15[0-9]:[%127[^]]]:%15[0-9]", lport, ip, rport);
-			config::tcp_listens[lport] = string(ip) + "/" + string(rport) + "/";
-			printf("pscl: set up local TCP port %s to proxy to %s:%s @ remote.\n", lport, ip, rport);
+			if (sscanf(optarg, "%15[0-9]:[%127[^]]]:%15[0-9]", lport, ip, rport) == 3) {
+				config::tcp_listens[lport] = string(ip) + "/" + string(rport) + "/";
+				printf("pscl: set up local TCP port %s to proxy to %s:%s @ remote.\n", lport, ip, rport);
+			}
 			break;
 		case 'U':
-			sscanf(optarg, "%15[0-9]:[%127[^]]]:%15[0-9]", lport, ip, rport);
-			config::udp_listens[lport] = string(ip) + "/" + string(rport) + "/";
-			printf("pscl: set up local UDP port %s to proxy to %s:%s @ remote.\n", lport, ip, rport);
+			if (sscanf(optarg, "%15[0-9]:[%127[^]]]:%15[0-9]", lport, ip, rport) == 3) {
+				config::udp_listens[lport] = string(ip) + "/" + string(rport) + "/";
+				printf("pscl: set up local UDP port %s to proxy to %s:%s @ remote.\n", lport, ip, rport);
+			}
 			break;
 		case '4':
 			if (config::socks4_fd == -1) {
