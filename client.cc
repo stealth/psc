@@ -1,7 +1,7 @@
 /*
  * This file is part of port shell crypter (psc).
  *
- * (C) 2006-2021 by Sebastian Krahmer,
+ * (C) 2006-2022 by Sebastian Krahmer,
  *                  sebastian [dot] krahmer [at] gmail [dot] com
  *
  * psc is free software: you can redistribute it and/or modify
@@ -78,6 +78,13 @@ bool winsize_changed = 0;
 void sig_win(int)
 {
 	winsize_changed = 1;
+}
+
+
+void usage(const char *argv0)
+{
+	printf("Usage: %s\t[-4 socks4 lport] [-5 socks5 lport] [-T lport:[ip]:rport]\n"
+	       "\t\t[-U lport:[ip]:rport] [-S scripting socket]\n\n", argv0);
 }
 
 
@@ -657,7 +664,7 @@ int proxy_loop()
 
 int main(int argc, char **argv)
 {
-	printf("\nPortShellCrypter [pscl] v0.63 (C) 2006-2021 stealth -- github.com/stealth/psc\n\n");
+	printf("\nPortShellCrypter [pscl] v0.64 (C) 2006-2022 stealth -- github.com/stealth/psc\n\n");
 
 	if (!getenv("SHELL")) {
 		printf("pscl: No $SHELL set in environment. Exiting.\n");
@@ -691,7 +698,7 @@ int main(int argc, char **argv)
 	int c = -1;
 	char lport[16] = {0}, ip[128] = {0}, rport[16] = {0};
 
-	while ((c = getopt(argc, argv, "T:U:5:4:S:")) != -1) {
+	while ((c = getopt(argc, argv, "T:U:5:4:S:h")) != -1) {
 		switch (c) {
 		case 'T':
 			sscanf(optarg, "%15[0-9]:[%127[^]]]:%15[0-9]", lport, ip, rport);
@@ -723,6 +730,10 @@ int main(int argc, char **argv)
 					printf("pscl: set up script socket on %s\n", optarg);;
 			}
 			break;
+		case 'h':
+		default:
+			usage(argv[0]);
+			exit(0);
 		}
 	}
 

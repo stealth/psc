@@ -1,7 +1,7 @@
 /*
  * This file is part of port shell crypter (psc).
  *
- * (C) 2006-2021 by Sebastian Krahmer,
+ * (C) 2006-2022 by Sebastian Krahmer,
  *                  sebastian [dot] krahmer [at] gmail [dot] com
  *
  * psc is free software: you can redistribute it and/or modify
@@ -361,7 +361,7 @@ int main(int argc, char **argv)
 	setbuffer(stdout, nullptr, 0);
 	setbuffer(stderr, nullptr, 0);
 
-	printf("\nPortShellCrypter [pscr] v0.63 (C) 2006-2021 stealth -- github.com/stealth/psc\n\n");
+	printf("\nPortShellCrypter [pscr] v0.64 (C) 2006-2022 stealth -- github.com/stealth/psc\n\n");
 
 	if (!getenv("SHELL")) {
 		printf("pscr: No $SHELL set in environment. Exiting.\n");

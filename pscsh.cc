@@ -33,25 +33,24 @@
 
 using namespace std;
 
-int main(int argc, char **argv)
-{
-	int c = -1;
-	string script_socket = "", script_file = "";
 
-	while ((c = getopt(argc, argv, "f:S:")) != -1) {
-		switch (c) {
-		case 'S':
-			script_socket = optarg;
-			break;
-		case 'f':
-			script_file = optarg;
-			break;
-		default:
-			break;
-		}
-	}
+void die(const char *msg)
+{
+	perror(msg);
+	exit(errno);
+}
+
+
+int script_loop(const string &script_socket, const string &script_file)
+{
 
 	struct sockaddr_un sun;
+
+	if (script_socket.size() >= sizeof(sun.sun_path)) {
+		errno = -E2BIG;
+		return -1;
+	}
+
 	memset(&sun, 0, sizeof(sun));
 	sun.sun_family = AF_UNIX;
 	strcpy(sun.sun_path, script_socket.c_str());
@@ -65,7 +64,7 @@ int main(int argc, char **argv)
 
 	int ifd = 0, n = 0;
 	char buf[4096] = {0};
-	string sbuf = "", obuf = "";
+	string sbuf = "", obuf = "", end_marker = "###endless summer###", end_detect = "";
 
 	if (script_file.size() > 0) {
 		if ((ifd = open(script_file.c_str(), O_RDONLY)) < 0)
@@ -74,22 +73,25 @@ int main(int argc, char **argv)
 
 	pollfd pfd[3] = {{ifd, POLLIN, 0}, {1, 0, 0}, {sfd, POLLIN, 0}};
 
-	for (bool leave = 0; !leave;) {
+	for (bool leave = 0, end_detected = 0; !leave;) {
+
 		if ((n = poll(pfd, 3, -1)) < 0)
 			break;
 		if (n == 0)
 			continue;
 
-		for (int i = 0; i < 3; ++i) {
+		for (unsigned int i = 0; i < sizeof(pfd)/sizeof(pfd[0]); ++i) {
 
 			if (pfd[i].revents & POLLIN) {
 
 				pfd[i].revents = 0;
 
 				if ((n = read(pfd[i].fd, buf, sizeof(buf))) <= 0) {
-					if (pfd[i].fd == ifd)
+					if (pfd[i].fd == ifd) {			// End of script? No more reads.
+						sbuf += end_marker + "\n";	// add end-marker to stream and wait for it to appear on remote pty-echo to notice finishing of script
+						pfd[2].events |= POLLOUT;
 						pfd[i].events = 0;
-					else
+					} else
 						leave = 1;
 				}
 				if (n > 0 && pfd[i].fd == ifd) {		// read from stdin/script
@@ -98,6 +100,14 @@ int main(int argc, char **argv)
 				} else if (n > 0 && pfd[i].fd == sfd) {		// read from socket
 					obuf += string(buf, n);
 					pfd[1].events |= POLLOUT;		// write to stdout
+
+					end_detect += string(buf, n);
+					if (end_detect.find(end_marker) != string::npos) {
+						pfd[i].events = 0;
+						end_detected = 1;
+					}
+					if (end_detect.size() > 3*end_marker.size())
+						end_detect.erase(0, end_marker.size());
 				}
 			}
 			if (pfd[i].revents & POLLOUT) {
@@ -110,8 +120,11 @@ int main(int argc, char **argv)
 						break;
 					}
 					obuf.erase(0, n);
-					if (obuf.size() == 0)
+					if (obuf.size() == 0) {
 						pfd[i].events &= ~POLLOUT;
+						if (end_detected)
+							leave = 1;
+					}
 				} else if (pfd[i].fd == sfd) {
 					if ((n = write(sfd, sbuf.c_str(), sbuf.size())) <= 0) {
 						leave = 1;
@@ -126,6 +139,36 @@ int main(int argc, char **argv)
 	}
 
 	close(sfd);
+	if (script_file.size() > 0)
+		close(ifd);
+
+	return 0;
+}
+
+int main(int argc, char **argv)
+{
+	int c = -1;
+	string script_socket = "", script_file = "";
+
+	if (getenv("HOME"))
+		script_socket = string(getenv("HOME")) + "/psc.script_sock";
+
+	while ((c = getopt(argc, argv, "f:S:")) != -1) {
+		switch (c) {
+		case 'S':
+			script_socket = optarg;
+			break;
+		case 'f':
+			script_file = optarg;
+			break;
+		default:
+			break;
+		}
+	}
+
+	if (script_loop(script_socket, script_file) < 0)
+		die("script_loop");
+
 	return 0;
 }
 

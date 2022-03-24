@@ -100,6 +100,8 @@ int unix_listen(const string &path)
 	if (path.size() >= sizeof(sun.sun_path))
 		return -1;
 
+	unlink(path.c_str());
+
 	int sfd = socket(PF_UNIX, SOCK_STREAM, 0);
 	if (sfd < 0)
 		return -1;
