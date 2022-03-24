@@ -122,6 +122,10 @@ int proxy_loop()
 	if (tcsetattr(0, TCSANOW, &tattr) < 0)
 		die("pscl: tcsetattr");
 
+	struct rlimit rl;
+	if (getrlimit(RLIMIT_NOFILE, &rl) < 0)
+		die("getrlimit");
+
 	if ((pid = fork()) == 0) {
 		char *a[] = {getenv("SHELL"), nullptr};
 		extern char **environ;
@@ -136,6 +140,8 @@ int proxy_loop()
 		setsid();
 		ioctl(0, TIOCSCTTY, 0);
 		pt.close();
+		for (unsigned int i = 3; i < rl.rlim_cur; ++i)
+			close(i);
 		execve(*a, a, environ);
 		die("pscl: execve");
 	} else if (pid < 0)
@@ -148,10 +154,6 @@ int proxy_loop()
 	if (psc->init(PSC_WRITE_KEY, PSC_READ_KEY, 0) < 0)
 		die(psc->why());
 	close(pt.slave());
-
-	struct rlimit rl;
-	if (getrlimit(RLIMIT_NOFILE, &rl) < 0)
-		die("getrlimit");
 
 	struct pollfd *pfds = new (nothrow) pollfd[rl.rlim_cur];
 	struct state *fd2state = new (nothrow) state[rl.rlim_cur];
