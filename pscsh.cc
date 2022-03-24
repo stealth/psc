@@ -46,7 +46,7 @@ int script_loop(const string &script_socket, const string &script_file)
 
 	struct sockaddr_un sun;
 
-	if (script_socket.size() >= sizeof(sun.sun_path)) {
+	if (script_socket.size() >= sizeof(sun.sun_path) - 1) {
 		errno = -E2BIG;
 		return -1;
 	}
@@ -145,6 +145,13 @@ int script_loop(const string &script_socket, const string &script_file)
 	return 0;
 }
 
+
+void usage(const char *argv0)
+{
+	printf("\nUsage: %s [-S script socket] [-f script file]\n\n", argv0);
+}
+
+
 int main(int argc, char **argv)
 {
 	int c = -1;
@@ -153,16 +160,22 @@ int main(int argc, char **argv)
 	if (getenv("HOME"))
 		script_socket = string(getenv("HOME")) + "/psc.script_sock";
 
-	while ((c = getopt(argc, argv, "f:S:")) != -1) {
+	while ((c = getopt(argc, argv, "f:S:h")) != -1) {
 		switch (c) {
 		case 'S':
 			script_socket = optarg;
 			break;
 		case 'f':
-			script_file = optarg;
+			if (strncmp(optarg, "script_", 7)) {
+				fprintf(stderr, "Script file must start with 'script_'.\n");
+				exit(1);
+			} else
+				script_file = optarg;
 			break;
+		case 'h':
 		default:
-			break;
+			usage(argv[0]);
+			exit(0);
 		}
 	}
 
