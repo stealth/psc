@@ -1,8 +1,8 @@
 /*
  * This file is part of port shell crypter (psc).
  *
- * (C) 2020 by Sebastian Krahmer,
- *             sebastian [dot] krahmer [at] gmail [dot] com
+ * (C) 2020-2022 by Sebastian Krahmer,
+ *                  sebastian [dot] krahmer [at] gmail [dot] com
  *
  * psc is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -30,6 +30,8 @@
 #include <poll.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/un.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include "misc.h"
@@ -89,6 +91,39 @@ int udp_listen(const string &ip, const string &port)
 int tcp_listen(const string &ip, const string &port)
 {
 	return listen(SOCK_STREAM, ip, port);
+}
+
+
+int unix_listen(const string &path)
+{
+	sockaddr_un sun;
+	if (path.size() >= sizeof(sun.sun_path))
+		return -1;
+
+	unlink(path.c_str());
+
+	int sfd = socket(PF_UNIX, SOCK_STREAM, 0);
+	if (sfd < 0)
+		return -1;
+
+
+	memset(&sun, 0, sizeof(sun));
+	sun.sun_family = AF_UNIX;
+	strcpy(sun.sun_path, path.c_str());
+
+	mode_t um = umask(077);
+	if (bind(sfd, reinterpret_cast<sockaddr *>(&sun), sizeof(sun)) < 0) {
+		umask(um);
+		close(sfd);
+		return -1;
+	}
+	if (::listen(sfd, 1) < 0) {
+		umask(um);
+		close(sfd);
+		return -1;
+	}
+	umask(um);
+	return sfd;
 }
 
 

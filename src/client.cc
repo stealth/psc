@@ -1,7 +1,7 @@
 /*
  * This file is part of port shell crypter (psc).
  *
- * (C) 2006-2021 by Sebastian Krahmer,
+ * (C) 2006-2022 by Sebastian Krahmer,
  *                  sebastian [dot] krahmer [at] gmail [dot] com
  *
  * psc is free software: you can redistribute it and/or modify
@@ -81,6 +81,13 @@ void sig_win(int)
 }
 
 
+void usage(const char *argv0)
+{
+	printf("Usage: %s\t[-4 socks4 lport] [-5 socks5 lport] [-T lport:[ip]:rport]\n"
+	       "\t\t[-U lport:[ip]:rport] [-S scripting socket]\n\n", argv0);
+}
+
+
 int proxy_loop()
 {
 
@@ -115,6 +122,10 @@ int proxy_loop()
 	if (tcsetattr(0, TCSANOW, &tattr) < 0)
 		die("pscl: tcsetattr");
 
+	struct rlimit rl;
+	if (getrlimit(RLIMIT_NOFILE, &rl) < 0)
+		die("getrlimit");
+
 	if ((pid = fork()) == 0) {
 		char *a[] = {getenv("SHELL"), nullptr};
 		extern char **environ;
@@ -129,6 +140,8 @@ int proxy_loop()
 		setsid();
 		ioctl(0, TIOCSCTTY, 0);
 		pt.close();
+		for (unsigned int i = 3; i < rl.rlim_cur; ++i)
+			close(i);
 		execve(*a, a, environ);
 		die("pscl: execve");
 	} else if (pid < 0)
@@ -141,10 +154,6 @@ int proxy_loop()
 	if (psc->init(PSC_WRITE_KEY, PSC_READ_KEY, 0) < 0)
 		die(psc->why());
 	close(pt.slave());
-
-	struct rlimit rl;
-	if (getrlimit(RLIMIT_NOFILE, &rl) < 0)
-		die("getrlimit");
 
 	struct pollfd *pfds = new (nothrow) pollfd[rl.rlim_cur];
 	struct state *fd2state = new (nothrow) state[rl.rlim_cur];
@@ -209,13 +218,23 @@ int proxy_loop()
 		fd2state[config::socks4_fd].state = STATE_SOCKS4_ACCEPT;
 	}
 
+	if (config::script_sock != -1) {
+		pfds[config::script_sock].fd = config::script_sock;
+		pfds[config::script_sock].events = POLLIN;
+
+		fd2state[config::script_sock].fd = config::script_sock;
+		fd2state[config::script_sock].rnode = "";
+		fd2state[config::script_sock].state = STATE_SCRIPT_ACCEPT;
+	}
+
+
 	// Build a local address for sending reply UDP dgrams. Only the dst port is unknown yet
 	// and will be constructed from the ID part of the IP/port/ID header
 	struct sockaddr_in lsin;
 	lsin.sin_family = AF_INET;
 	inet_pton(AF_INET, "127.0.0.1", &lsin.sin_addr);
 
-	int max_fd = rl.rlim_cur - 1;
+	int max_fd = rl.rlim_cur - 1, script_fd = -1;
 
 	string ext_cmd = "", tbuf = "";
 
@@ -276,6 +295,11 @@ int proxy_loop()
 					tcp_nodes2sock.erase(fd2state[i].rnode);
 				}
 
+				if (fd2state[i].state == STATE_SCRIPT_IO) {
+					pfds[0].events |= POLLIN;		// reactivate stdin
+					pfds[config::script_sock].events |= POLLIN;
+				}
+
 				close(i);
 				fd2state[i].fd = -1;
 				fd2state[i].state = STATE_INVALID;
@@ -291,6 +315,7 @@ int proxy_loop()
 			if (pfds[i].revents & POLLIN) {
 				pfds[i].revents = 0;
 				if (fd2state[i].state == STATE_STDIN) {
+
 					if ((r = read(0, sbuf, sizeof(sbuf))) <= 0) {
 						if (errno == EINTR)
 							continue;
@@ -322,6 +347,13 @@ int proxy_loop()
 							fd2state[1].time = now;
 							fd2state[1].obuf += tbuf;
 							pfds[1].events |= POLLOUT;
+
+							// mirror to script sock if opened
+							if (script_fd >= 0) {
+								fd2state[script_fd].time = now;
+								fd2state[script_fd].obuf += tbuf;
+								pfds[script_fd].events |= POLLOUT;
+							}
 						}
 					} while (r == 1);
 
@@ -513,7 +545,44 @@ int proxy_loop()
 					fd2state[i].time = now;
 
 					udp_nodes2sock[fd2state[i].rnode + id] = i;
+
+				} else if (fd2state[i].state == STATE_SCRIPT_ACCEPT) {
+
+					if ((script_fd = accept(i, nullptr, nullptr)) < 0)
+						continue;
+
+					pfds[script_fd].fd = script_fd;
+
+					pfds[script_fd].events = POLLIN;
+					pfds[i].events = 0;			// block further connects to UNIX script socket
+					pfds[0].events = 0;			// block stdin typing during script processing
+
+					fd2state[script_fd].fd = script_fd;
+					fd2state[script_fd].rnode = "";
+					fd2state[script_fd].state = STATE_SCRIPT_IO;
+					fd2state[script_fd].time = now;
+					fd2state[script_fd].obuf.clear();
+
+				} else if (fd2state[i].state == STATE_SCRIPT_IO) {	// very similar to STDIN read
+
+					if ((r = read(i, sbuf, sizeof(sbuf))) <= 0) {
+						if (errno == EINTR)
+							continue;
+						close(i);
+						script_fd = -1;
+						pfds[i].fd = -1;
+						pfds[i].events = 0;
+						fd2state[i].state = STATE_INVALID;
+						fd2state[i].fd = -1;
+						fd2state[i].obuf.clear();
+						pfds[0].events |= POLLIN;		// reactivate stdin
+						pfds[config::script_sock].events |= POLLIN;
+						continue;
+					}
+					fd2state[pt.master()].obuf += psc->possibly_b64encrypt("D:0:", string(sbuf, r));
+					pfds[pt.master()].events |= POLLOUT;
 				}
+
 			} else if (pfds[i].revents & POLLOUT) {
 				pfds[i].revents = 0;
 				if (fd2state[i].state == STATE_STDOUT) {
@@ -533,6 +602,7 @@ int proxy_loop()
 							die(psc->why());
 					}
 
+					fd2state[i].time = now;
 					fd2state[i].obuf.erase(0, r);
 				} else if (fd2state[i].state == STATE_CONNECT ||	// for the SOCKS4/5 case: reply with conn success
 					   fd2state[i].state == STATE_SOCKS5_AUTH2 ||	// for the SOCKS5 case: reply for auth success
@@ -562,6 +632,26 @@ int proxy_loop()
 					fd2state[i].odgrams.pop_front();
 					fd2state[i].ulports.pop_front();
 					fd2state[i].time = now;
+
+				} else if (fd2state[i].state == STATE_SCRIPT_IO) {
+					if ((r = write(i, fd2state[i].obuf.c_str(), fd2state[i].obuf.size())) <= 0) {
+						if (errno == EINTR)
+							continue;
+
+						close(i);
+						script_fd = -1;
+						pfds[i].fd = -1;
+						pfds[i].events = 0;
+						fd2state[i].state = STATE_INVALID;
+						fd2state[i].fd = -1;
+						fd2state[i].obuf.clear();
+						pfds[0].events |= POLLIN;		// reactivate stdin
+						pfds[config::script_sock].events |= POLLIN;
+						continue;
+					}
+
+					fd2state[i].time = now;
+					fd2state[i].obuf.erase(0, r);
 				}
 
 				if (fd2state[i].obuf.empty() && fd2state[i].odgrams.empty())
@@ -576,7 +666,7 @@ int proxy_loop()
 
 int main(int argc, char **argv)
 {
-	printf("\nPortShellCrypter [pscl] v0.63 (C) 2006-2021 stealth -- github.com/stealth/psc\n\n");
+	printf("\nPortShellCrypter [pscl] v0.64 (C) 2006-2022 stealth -- github.com/stealth/psc\n\n");
 
 	if (!getenv("SHELL")) {
 		printf("pscl: No $SHELL set in environment. Exiting.\n");
@@ -610,17 +700,19 @@ int main(int argc, char **argv)
 	int c = -1;
 	char lport[16] = {0}, ip[128] = {0}, rport[16] = {0};
 
-	while ((c = getopt(argc, argv, "T:U:5:4:")) != -1) {
+	while ((c = getopt(argc, argv, "T:U:5:4:S:h")) != -1) {
 		switch (c) {
 		case 'T':
-			sscanf(optarg, "%15[0-9]:[%127[^]]]:%15[0-9]", lport, ip, rport);
-			config::tcp_listens[lport] = string(ip) + "/" + string(rport) + "/";
-			printf("pscl: set up local TCP port %s to proxy to %s:%s @ remote.\n", lport, ip, rport);
+			if (sscanf(optarg, "%15[0-9]:[%127[^]]]:%15[0-9]", lport, ip, rport) == 3) {
+				config::tcp_listens[lport] = string(ip) + "/" + string(rport) + "/";
+				printf("pscl: set up local TCP port %s to proxy to %s:%s @ remote.\n", lport, ip, rport);
+			}
 			break;
 		case 'U':
-			sscanf(optarg, "%15[0-9]:[%127[^]]]:%15[0-9]", lport, ip, rport);
-			config::udp_listens[lport] = string(ip) + "/" + string(rport) + "/";
-			printf("pscl: set up local UDP port %s to proxy to %s:%s @ remote.\n", lport, ip, rport);
+			if (sscanf(optarg, "%15[0-9]:[%127[^]]]:%15[0-9]", lport, ip, rport) == 3) {
+				config::udp_listens[lport] = string(ip) + "/" + string(rport) + "/";
+				printf("pscl: set up local UDP port %s to proxy to %s:%s @ remote.\n", lport, ip, rport);
+			}
 			break;
 		case '4':
 			if (config::socks4_fd == -1) {
@@ -636,6 +728,16 @@ int main(int argc, char **argv)
 					printf("pscl: set up SOCKS5 port on %s\n", optarg);
 			}
 			break;
+		case 'S':
+			if (config::script_sock == -1) {
+				if ((config::script_sock = unix_listen(optarg)) > 0)
+					printf("pscl: set up script socket on %s\n", optarg);;
+			}
+			break;
+		case 'h':
+		default:
+			usage(argv[0]);
+			exit(0);
 		}
 	}
 

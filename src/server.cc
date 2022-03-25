@@ -1,7 +1,7 @@
 /*
  * This file is part of port shell crypter (psc).
  *
- * (C) 2006-2021 by Sebastian Krahmer,
+ * (C) 2006-2022 by Sebastian Krahmer,
  *                  sebastian [dot] krahmer [at] gmail [dot] com
  *
  * psc is free software: you can redistribute it and/or modify
@@ -26,6 +26,8 @@
 #include <cerrno>
 #include <cstdlib>
 #include <vector>
+#include <algorithm>
+#include <memory>
 #include <unistd.h>
 #include <poll.h>
 #include <sys/types.h>
@@ -34,6 +36,7 @@
 #include <sys/resource.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
+#include <netinet/tcp.h>
 
 #include "net.h"
 #include "pty.h"
@@ -355,18 +358,149 @@ int proxy_loop()
 }
 
 
+int b64_encode_file(const string &path)
+{
+	int fd;
+	if ((fd = open(path.c_str(), O_RDONLY|O_NOCTTY)) < 0)
+		return -1;
+
+	char buf[4096] = {0};
+	string data = "";
+
+	for (size_t r = 0;;) {
+		if ((r = read(fd, buf, sizeof(buf))) <= 0)
+			break;
+		data += string(buf, r);
+	}
+
+	close(fd);
+
+	unique_ptr<unsigned char[]> b64(new (nothrow) unsigned char[2*data.size()]);
+	if (!b64.get())
+		return -1;
+
+	string b64_str = b64_encode(data.c_str(), data.size(), b64.get());
+
+	printf("begin-base64 600 %s\n", path.c_str());
+	while (b64_str.size() > 0) {
+		printf("%s\n", b64_str.substr(0, 60).c_str());
+		b64_str.erase(0, 60);
+	}
+	printf("====\n");
+
+	return 0;
+}
+
+
+// decode from stdin
+int b64_decode_file()
+{
+	char buf[4096] = {0};
+	string data = "", marker = "begin-base64 600 ", hdr = "";
+	string::size_type idx;
+
+	for (;;) {
+		if (!fgets(buf, sizeof(buf) - 1, stdin))
+			return -1;
+		hdr = buf;
+		if ((idx = hdr.find(marker)) != string::npos)
+			break;
+	}
+
+	string path = hdr.substr(marker.size());
+	if ((idx = path.rfind("/")) != string::npos)
+		path.erase(0, idx + 1);
+	if ((idx = path.find("\n")) != string::npos)
+		path.erase(idx, 1);
+	if ((idx = path.find("\r")) != string::npos)
+		path.erase(idx, 1);
+
+	path = "_b64." + path;
+
+	for (size_t r = 0;;) {
+		if ((r = read(0, buf, sizeof(buf))) <= 0)
+			break;
+		data += string(buf, r);
+		if (data.find("\n====") != string::npos)
+			break;
+	}
+
+	if ((idx = data.find("\n====")) != string::npos)
+		data.erase(idx);
+
+	// erase all new-lines
+	data.erase(remove(data.begin(), data.end(), '\r'), data.end());
+	data.erase(remove(data.begin(), data.end(), '\n'), data.end());
+
+	unique_ptr<unsigned char[]> b64(new (nothrow) unsigned char[data.size()]);
+	if (!b64.get())
+		return -1;
+
+	auto dec_len = b64_decode(data.c_str(), b64.get());
+
+	int fd = open(path.c_str(), O_CREAT|O_WRONLY|O_EXCL, 0600);
+	if (fd < 0)
+		return -1;
+
+	write(fd, b64.get(), dec_len);
+	close(fd);
+
+	return 0;
+}
+
+
+void usage(const char *argv0)
+{
+	printf("Usage: %s [-E file] [-D] [-N]\n", argv0);
+}
+
+
 int main(int argc, char **argv)
 {
 	setbuffer(stdin, nullptr, 0);
 	setbuffer(stdout, nullptr, 0);
 	setbuffer(stderr, nullptr, 0);
 
-	printf("\nPortShellCrypter [pscr] v0.63 (C) 2006-2021 stealth -- github.com/stealth/psc\n\n");
+	printf("\nPortShellCrypter [pscr] v0.64 (C) 2006-2022 stealth -- github.com/stealth/psc\n\n");
 
 	if (!getenv("SHELL")) {
 		printf("pscr: No $SHELL set in environment. Exiting.\n");
 		exit(1);
 	}
+
+	int c = 0;
+	bool no_nagle = 0, b64_encoded = 0;
+
+	while ((c = getopt(argc, argv, "E:DNh")) != -1) {
+
+		switch (c) {
+		case 'N':
+			no_nagle = 1;
+			break;
+		case 'E':
+			b64_encode_file(optarg);
+			b64_encoded = 1;
+			break;
+		case 'D':
+			b64_decode_file();
+			exit(0);
+			break;
+		case 'h':
+		default:
+			usage(argv[0]);
+			exit(0);
+		}
+	}
+
+	// disable nagle if stdout is a socket
+	if (no_nagle) {
+		int one = 1;
+		socklen_t len = sizeof(one);
+		setsockopt(1, IPPROTO_TCP, TCP_NODELAY, &one, len);
+	}
+
+	if (b64_encoded)
+		return 0;
 
 	proxy_loop();
 

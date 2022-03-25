@@ -1,7 +1,7 @@
 /*
  * This file is part of port shell crypter (psc).
  *
- * (C) 2006-2021 by Sebastian Krahmer,
+ * (C) 2006-2022 by Sebastian Krahmer,
  *                  sebastian [dot] krahmer [at] gmail [dot] com
  *
  * psc is free software: you can redistribute it and/or modify
@@ -40,6 +40,8 @@ extern std::map<std::string, int> tcp_nodes2sock, udp_nodes2sock;
 int tcp_listen(const std::string &, const std::string &);
 
 int udp_listen(const std::string &, const std::string &);
+
+int unix_listen(const std::string &);
 
 int cmd_handler(const std::string &, state *, pollfd *, uint32_t flags = 0);
 
