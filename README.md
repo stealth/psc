@@ -1,6 +1,10 @@
 PortShellCrypter -- PSC
 =======================
 
+This project - as well as its sister project [crash](https://github.com/stealth/crash) - belongs
+to my anti-censorship tool set that allows to setup fully working encrypted shells and TCP/UDP
+forwarding in hostile censoring environments.
+
 [![asciicast](https://asciinema.org/a/383043.svg)](https://asciinema.org/a/383043)
 *DNS lookup and SSH session forwarded across an UART connection to a Pi*
 
@@ -39,7 +43,7 @@ Then just type `make` on *Linux*.
 
 On *BSD*, you need to install *GNU make* and invoke `gmake` instead.
 
-On *OSX*, you need to install *OpenSSL* and declare the apropriate installation
+On *OSX*, you need to install *OpenSSL* and declare the appropriate installation
 path inside the `Makefile` and type `make`.
 
 On *Linux*, PSC will use *Unix98* pseudo terminals, on other systems it will use *POSIX*
@@ -109,7 +113,7 @@ Base64 encoding, each typed character already causes much more data to be sent.
 UART sessions may be used via `screen` but for example not via `minicom` since
 minicom will create invisible windows with status lines and acts like a filter
 that destroys PSC's protocol. PSC tries to detect filtering and can live with
-certain amout of data mangling, but in some situations it is not possible to recover.
+certain amount of data mangling, but in some situations it is not possible to recover.
 Similar thing with `tmux`. You should avoid stacking pty handlers with PSC that
 mess/handle their incoming data too much.
 
@@ -129,6 +133,22 @@ connection during a pentest. For *chrome*, *SOCKS4* must be used, as the PSC SOC
 does not support resolving domain names on their own. Instead, it requires IPv4 or IPv6
 addresses to be passed along. Since *chrome* will set the *SOCKS5* protocol *address type*
 always to *domain name* (`0x03`) - even if an IP address is entered in the address bar -
-SOCKS5 is not usuable with *chrome*. But you can use *chrome* with *SOCKS4*, since this
+SOCKS5 is not usable with *chrome*. But you can use *chrome* with *SOCKS4*, since this
 protocol only supports IPv4 addresses, not domain names.
+
+
+Scripting
+---------
+
+As of version 0.64, *psc* supports scripting-sockets so you no longer need `screen` to
+get/put files or dump paste buffers to the remote console. Instead, you start your local
+session like so: `pscl -S ~/psc.script_sock`. You can then go ahead and use it as before.
+If you need to 'paste' something you do like: `pscsh -S ~/psc.script_sock -f script_/helloworld`.
+This will 'type' the content of `script_/helloworld` to the console. While scripting,
+the stdin of `pscl` is blocked so that the injected input does not mix up with any
+typing. If `-S` is omitted in `pscsh`, `~/psc.script_sock` is used automatically.
+For safety reasons, scripts must start with the `script_` prefix.
+
+As a bonus, `pscr` now contains the ability to base64 en/decode files, even with CR
+embedded characters for convenience. It is compatible to `uuencode -m`.
 
