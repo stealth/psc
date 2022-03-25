@@ -64,7 +64,7 @@ int script_loop(const string &script_socket, const string &script_file)
 
 	int ifd = 0, n = 0;
 	char buf[4096] = {0};
-	string sbuf = "", obuf = "", end_marker = "###endless summer###", end_detect = "";
+	string sbuf = "", obuf = "", end_marker = "###everlong###", end_detect = "";
 
 	if (script_file.size() > 0) {
 		if ((ifd = open(script_file.c_str(), O_RDONLY)) < 0)

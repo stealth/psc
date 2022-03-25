@@ -1,8 +1,8 @@
 /*
  * This file is part of port shell crypter (psc).
  *
- * (C) 2020 by Sebastian Krahmer,
- *             sebastian [dot] krahmer [at] gmail [dot] com
+ * (C) 2020-2022 by Sebastian Krahmer,
+ *                  sebastian [dot] krahmer [at] gmail [dot] com
  *
  * psc is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by

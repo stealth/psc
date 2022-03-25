@@ -1,0 +1,6 @@
+unset HISTFILE
+for i in 1 2 3; do
+echo "Hello world $i!"
+done
+echo "plz encode"|./pscr -E /dev/stdin
+
