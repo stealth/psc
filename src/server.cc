@@ -98,6 +98,10 @@ int proxy_loop()
 	if (sigaction(SIGCHLD, &sa, nullptr) < 0)
 		die("pscr: sigaction");
 
+	sa.sa_handler = SIG_IGN;
+	if (sigaction(SIGPIPE, &sa, nullptr) < 0)
+		die("pscr: sigaction");
+
 	if ((pid = fork()) == 0) {
 		char *a[] = {getenv("SHELL"), nullptr};
 		extern char **environ;

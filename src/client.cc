@@ -238,6 +238,8 @@ int proxy_loop()
 
 	string ext_cmd = "", tbuf = "";
 
+	enum { CHUNK_SIZE = 8192 };
+
 	for (;;) {
 
 		memset(sbuf, 0, sizeof(sbuf));
@@ -586,7 +588,10 @@ int proxy_loop()
 			} else if (pfds[i].revents & POLLOUT) {
 				pfds[i].revents = 0;
 				if (fd2state[i].state == STATE_STDOUT) {
-					if ((r = write(1, fd2state[i].obuf.c_str(), fd2state[i].obuf.size())) <= 0) {
+
+					size_t n = fd2state[i].obuf.size() > CHUNK_SIZE ? CHUNK_SIZE : fd2state[i].obuf.size();
+
+					if ((r = write(1, fd2state[i].obuf.c_str(), n)) <= 0) {
 						if (errno == EINTR)
 							continue;
 						else
@@ -634,7 +639,10 @@ int proxy_loop()
 					fd2state[i].time = now;
 
 				} else if (fd2state[i].state == STATE_SCRIPT_IO) {
-					if ((r = write(i, fd2state[i].obuf.c_str(), fd2state[i].obuf.size())) <= 0) {
+
+					size_t n = fd2state[i].obuf.size() > CHUNK_SIZE ? CHUNK_SIZE : fd2state[i].obuf.size();
+
+					if ((r = write(i, fd2state[i].obuf.c_str(), n)) <= 0) {
 						if (errno == EINTR)
 							continue;
 
@@ -694,7 +702,8 @@ int main(int argc, char **argv)
 		die("pscl: sigaction");
 
 	sa.sa_handler = SIG_IGN;
-	if (sigaction(SIGINT, &sa, nullptr) < 0 || sigaction(SIGQUIT, &sa, nullptr))
+	if (sigaction(SIGINT, &sa, nullptr) < 0 || sigaction(SIGQUIT, &sa, nullptr) ||
+	    sigaction(SIGPIPE, &sa, nullptr))
 		die("pscl: sigaction");
 
 	int c = -1;
