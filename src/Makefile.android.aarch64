@@ -21,13 +21,13 @@ INC=-isystem $(ROOT)/$(NDK)/sysroot/usr/include/aarch64-linux-android\
 
 LIB=-Wl,$(ROOT)/$(NDK)/sources/cxx-stl/gnu-libstdc++/4.9/libs/arm64-v8a/libgnustl_static.a
 
-DEFS=-DPSC_READ_KEY=$(KEY1) -DPSC_WRITE_KEY=$(KEY2) -fPIC
+DEFS=-DPSC_READ_KEY=$(KEY1) -DPSC_WRITE_KEY=$(KEY2)
 DEFS+=-DHAVE_UNIX98
 
-CXX=$(PREFIX)gcc -O2 -Wall -pedantic -std=c++11 $(SYSROOT) $(INC) $(DEFS)
+CXX=$(PREFIX)gcc $(SYSROOT) $(INC)
 LD=$(PREFIX)gcc -pie $(SYSROOT)
 
-CXXFLAGS=-c
+CXXFLAGS=-c -O2 -Wall -pedantic -std=c++11 -fPIC
 
 
 .PHONY: all clean
@@ -39,13 +39,13 @@ clean:
 	rm -f *.o
 
 pscl: misc.o client.o pcwrap.o pty.o pty98.o net.o sha512.o aes.o
-	$(CXX) $^ -o $@ $(LIB)
+	$(LD) $^ -o $@ $(LIB)
 
 pscr: misc.o server.o pty.o pty98.o pcwrap.o net.o sha512.o aes.o
 	$(LD) $^ -o $@ $(LIB)
 
 pscsh: pscsh.o
-	$(CXX) $^ -o $@ $(LIB)
+	$(LD) $^ -o $@ $(LIB)
 
 pcwrap.o: pcwrap.cc
 	$(CXX) $(DEFS) $(CXXFLAGS) $^ -o $@
