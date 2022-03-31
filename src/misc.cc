@@ -162,5 +162,21 @@ char *b64_encode(const char *s, size_t len, unsigned char *buf)
 	return reinterpret_cast<char *>(result);
 }
 
+
+// our own limited version, as we only need few bytes
+int RAND_bytes(unsigned char *buf, int num)
+{
+	int fd = 0, r = 0;
+
+	if ((fd = open("/dev/urandom", O_RDONLY|O_NOCTTY)) < 0)
+		return 0;
+	if (read(fd, buf, num) == num)
+		r = 1;
+	close(fd);
+
+	return r;
+}
+
+
 }
 

@@ -465,7 +465,7 @@ int main(int argc, char **argv)
 	setbuffer(stdout, nullptr, 0);
 	setbuffer(stderr, nullptr, 0);
 
-	printf("\nPortShellCrypter [pscr] v0.64 (C) 2006-2022 stealth -- github.com/stealth/psc\n\n");
+	printf("\nPortShellCrypter [pscr] v0.65 (C) 2006-2022 stealth -- github.com/stealth/psc\n\n");
 
 	if (!getenv("SHELL")) {
 		printf("pscr: No $SHELL set in environment. Exiting.\n");

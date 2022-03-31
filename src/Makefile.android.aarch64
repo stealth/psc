@@ -1,0 +1,79 @@
+#
+# This is the Makefile for the Android flavor, Aarch64
+#
+
+
+# MUST use different keys for KEY1 and KEY2
+KEY1=\"secret1\"
+KEY2=\"secret2\"
+
+ROOT=/opt
+NDK=android-ndk-r17b
+
+PREFIX=$(ROOT)/$(NDK)/toolchains/aarch64-linux-android-4.9/prebuilt/linux-x86_64/bin/aarch64-linux-android-
+SYSROOT=--sysroot=$(ROOT)/$(NDK)/platforms/android-24/arch-arm64/
+SYSROOT+=-isysroot $(ROOT)/$(NDK)/sysroot
+
+INC=-isystem $(ROOT)/$(NDK)/sysroot/usr/include/aarch64-linux-android\
+    -I$(ROOT)/$(NDK)/sources/cxx-stl/gnu-libstdc++/include\
+    -I$(ROOT)/$(NDK)/sources/cxx-stl/gnu-libstdc++/4.9/include/\
+    -I$(ROOT)/$(NDK)/sources/cxx-stl/gnu-libstdc++/4.9/libs/arm64-v8a/include
+
+LIB=-Wl,$(ROOT)/$(NDK)/sources/cxx-stl/gnu-libstdc++/4.9/libs/arm64-v8a/libgnustl_static.a
+
+DEFS=-DPSC_READ_KEY=$(KEY1) -DPSC_WRITE_KEY=$(KEY2) -fPIC
+DEFS+=-DHAVE_UNIX98
+
+CXX=$(PREFIX)gcc -O2 -Wall -pedantic -std=c++11 $(SYSROOT) $(INC) $(DEFS)
+LD=$(PREFIX)gcc -pie $(SYSROOT)
+
+CXXFLAGS=-c
+
+
+.PHONY: all clean
+
+
+all: pscl pscr pscsh
+
+clean:
+	rm -f *.o
+
+pscl: misc.o client.o pcwrap.o pty.o pty98.o net.o sha512.o aes.o
+	$(CXX) $^ -o $@ $(LIB)
+
+pscr: misc.o server.o pty.o pty98.o pcwrap.o net.o sha512.o aes.o
+	$(LD) $^ -o $@ $(LIB)
+
+pscsh: pscsh.o
+	$(CXX) $^ -o $@ $(LIB)
+
+pcwrap.o: pcwrap.cc
+	$(CXX) $(DEFS) $(CXXFLAGS) $^ -o $@
+
+client.o: client.cc
+	$(CXX) $(DEFS) $(CXXFLAGS) $^ -o $@
+
+server.o: server.cc
+	$(CXX) $(DEFS) $(CXXFLAGS) $^ -o $@
+
+misc.o: misc.cc
+	$(CXX) $(DEFS) $(CXXFLAGS) $^ -o $@
+
+pty.o: pty.cc
+	$(CXX) $(DEFS) $(CXXFLAGS) $^ -o $@
+
+pty98.o: pty98.cc
+	$(CXX) $(DEFS) $(CXXFLAGS) $^ -o $@
+
+net.o: net.cc
+	$(CXX) $(DEFS) $(CXXFLAGS) $^ -o $@
+
+aes.o: external/aes.cc
+	$(CXX) $(DEFS) $(CXXFLAGS) $^ -o $@
+
+sha512.o: external/sha512.cc
+	$(CXX) $(DEFS) $(CXXFLAGS) $^ -o $@
+
+pscsh.o: pscsh.cc
+	$(CXX) $(DEFS) $(CXXFLAGS) $^ -o $@
+

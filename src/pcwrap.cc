@@ -33,13 +33,10 @@
 
 #include "pcwrap.h"
 #include "misc.h"
-#include "deleters.h"
-#include "missing.h"
 
-extern "C" {
-#include <openssl/evp.h>
-#include <openssl/rand.h>
-}
+#include "external/aes.h"
+#include "external/sha512.h"
+
 
 using namespace std;
 
@@ -52,33 +49,22 @@ pc_wrap::pc_wrap(int rfd, int wfd)
 }
 
 
-static int kdf(const char *secret, int slen, unsigned char key[EVP_MAX_KEY_LENGTH])
+static int kdf(const char *secret, int slen, unsigned char key[SHA512_SIZE])
 {
-	unsigned int hlen = 0;
-	unsigned char digest[EVP_MAX_MD_SIZE];	// 64 which matches sha512
-
 	if (slen <= 0)
 		return -1;
-	memset(key, 0xff, EVP_MAX_KEY_LENGTH);
+	memset(key, 0xff, SHA512_SIZE);
 
-	unique_ptr<EVP_MD_CTX, EVP_MD_CTX_del> md_ctx(EVP_MD_CTX_create(), EVP_MD_CTX_delete);
-	if (!md_ctx.get())
-		return -1;
-	if (EVP_DigestInit_ex(md_ctx.get(), EVP_sha512(), nullptr) != 1)
-		return -1;
-	if (EVP_DigestUpdate(md_ctx.get(), reinterpret_cast<const void *>(secret), slen) != 1)
-		return -1;
+	sha512_context md_ctx;
+
+	sha512_init(&md_ctx);
+	sha512_update(&md_ctx, reinterpret_cast<const uint8_t *>(secret), slen);
 
 	string vs = "v1";
-	if (EVP_DigestUpdate(md_ctx.get(), vs.c_str(), vs.size()) != 1)
-		return -1;
+	sha512_update(&md_ctx, reinterpret_cast<const uint8_t *>(vs.c_str()), vs.size());
+	uint8_t *md = sha512_final(&md_ctx);
 
-	if (EVP_DigestFinal_ex(md_ctx.get(), digest, &hlen) != 1)
-		return -1;
-
-	if (hlen > EVP_MAX_KEY_LENGTH)
-		hlen = EVP_MAX_KEY_LENGTH;
-	memcpy(key, digest, hlen);
+	memcpy(key, md, SHA512_SIZE);
 	return 0;
 }
 
@@ -89,38 +75,22 @@ int pc_wrap::init(const string &k1, const string &k2, bool s)
 
 	err = "pc_wrap::init: Initializing crypto CTX failed.";
 
-	RAND_load_file("/dev/urandom", 128);
-
 	unsigned char tmp[16] = {0};
-	RAND_bytes(tmp, sizeof(tmp));
+	if (RAND_bytes(tmp, sizeof(tmp)) != 1)
+		return -1;
+
 	b64_encode(reinterpret_cast<char *>(tmp), sizeof(tmp), iv);
 	memset(iv + 16, 0, sizeof(iv) - 16);
-
-#if (OPENSSL_VERSION_NUMBER < 0x10100000L)
-	r_ctx = new (nothrow) EVP_CIPHER_CTX;
-	w_ctx = new (nothrow) EVP_CIPHER_CTX;
-	if (!r_ctx || !w_ctx)
-		return -1;
-
-	EVP_CIPHER_CTX_init(r_ctx);
-	EVP_CIPHER_CTX_init(w_ctx);
-#else
-	r_ctx = EVP_CIPHER_CTX_new();
-	w_ctx = EVP_CIPHER_CTX_new();
-	if (!r_ctx || !w_ctx)
-		return -1;
-#endif
 
 	if (kdf(k1.c_str(), k1.size(), w_key) < 0)
 		return -1;
 	if (kdf(k2.c_str(), k2.size(), r_key) < 0)
 		return -1;
 
-	// must be a stream cipher, so we are not bound by block sizes
-	if (EVP_EncryptInit_ex(w_ctx, EVP_aes_256_ctr(), nullptr, w_key, nullptr) != 1)
-		return -1;
-	if (EVP_DecryptInit_ex(r_ctx, EVP_aes_256_ctr(), nullptr, r_key, nullptr) != 1)
-		return -1;
+	err = "";
+
+	AES_init_ctx(&w_ctx, w_key);
+	AES_init_ctx(&r_ctx, r_key);
 
 	return 0;
 }
@@ -133,28 +103,18 @@ int pc_wrap::reset()
 	if (!server_mode)
 		tcsetattr(r_fd, TCSANOW, &d_saved_rfd_tattr);
 
-	err = "pc_wrap::reset: Resetting crypto CTX failed.";
+	err = "pc_wrap::reset: resetting crypto CTX failed.";
 
 	unsigned char tmp[16] = {0};
-	RAND_bytes(tmp, sizeof(tmp));
+	if (RAND_bytes(tmp, sizeof(tmp)) != 1)
+		return -1;
+
 	b64_encode(reinterpret_cast<char *>(tmp), sizeof(tmp), iv);
 
-#if (OPENSSL_VERSION_NUMBER <= 0x10100000L)
-	EVP_CIPHER_CTX_cleanup(r_ctx);
-	EVP_CIPHER_CTX_cleanup(w_ctx);
+	err = "";
 
-	EVP_CIPHER_CTX_init(r_ctx);
-	EVP_CIPHER_CTX_init(w_ctx);
-#else
-
-	EVP_CIPHER_CTX_reset(r_ctx);
-	EVP_CIPHER_CTX_reset(w_ctx);
-#endif
-
-	if (EVP_EncryptInit_ex(w_ctx, EVP_aes_256_ctr(), nullptr, w_key, nullptr) != 1)
-		return -1;
-	if (EVP_DecryptInit_ex(r_ctx, EVP_aes_256_ctr(), nullptr, r_key, nullptr) != 1)
-		return -1;
+	AES_init_ctx(&w_ctx, w_key);
+	AES_init_ctx(&r_ctx, r_key);
 
 	return 0;
 }
@@ -162,32 +122,13 @@ int pc_wrap::reset()
 
 pc_wrap::~pc_wrap()
 {
-
-#if (OPENSSL_VERSION_NUMBER <= 0x10100000L)
-	EVP_CIPHER_CTX_cleanup(r_ctx);
-	EVP_CIPHER_CTX_cleanup(w_ctx);
-
-	delete r_ctx;
-	delete w_ctx;
-#else
-	EVP_CIPHER_CTX_free(r_ctx);
-	EVP_CIPHER_CTX_free(w_ctx);
-
-#endif
-
 }
 
 
 int pc_wrap::enable_crypto()
 {
-	if (EVP_EncryptInit_ex(w_ctx, nullptr, nullptr, nullptr, iv) != 1) {
-		err = "pc_wrap::enable_crypto: EncryptInit failed.";
-		return -1;
-	}
-	if (EVP_DecryptInit_ex(r_ctx, nullptr, nullptr, nullptr, iv) != 1) {
-		err = "pc_wrap::enable_crypto: DecryptInit failed.";
-		return -1;
-	}
+	AES_ctx_set_iv(&w_ctx, reinterpret_cast<uint8_t *>(iv));
+	AES_ctx_set_iv(&r_ctx, reinterpret_cast<uint8_t *>(iv));
 
 	seen_starttls = 1;
 
@@ -213,12 +154,13 @@ string pc_wrap::decrypt(const string &buf)
 	if (buf.size() <= 0)
 		return result;
 
-	int olen = 0;
-	char *obuf = new (nothrow) char[2*buf.size() + EVP_MAX_BLOCK_LENGTH];
+	char *obuf = new (nothrow) char[buf.size()];
 	if (!obuf)
 		return result;
-	EVP_DecryptUpdate(r_ctx, reinterpret_cast<unsigned char *>(obuf), &olen, reinterpret_cast<const unsigned char *>(buf.c_str()), buf.size());
-	result.assign(obuf, olen);
+
+	AES_CTR_xcrypt(&r_ctx, reinterpret_cast<const uint8_t *>(buf.c_str()), buf.size(), reinterpret_cast<uint8_t *>(obuf));
+
+	result.assign(obuf, buf.size());
 	delete [] obuf;
 
 	return result;
@@ -228,15 +170,16 @@ string pc_wrap::decrypt(const string &buf)
 string pc_wrap::encrypt(const string &buf)
 {
 	string result = "";
-	if (buf.size() == 0)
+	if (buf.size() <= 0)
 		return result;
 
-	int olen = 0;
-	char *obuf = new (nothrow) char[2*buf.size() + EVP_MAX_BLOCK_LENGTH];
+	char *obuf = new (nothrow) char[buf.size()];
 	if (!obuf)
 		return result;
-	EVP_EncryptUpdate(w_ctx, reinterpret_cast<unsigned char *>(obuf), &olen, reinterpret_cast<const unsigned char *>(buf.c_str()), buf.size());
-	result.assign(obuf, olen);
+
+	AES_CTR_xcrypt(&w_ctx, reinterpret_cast<const uint8_t *>(buf.c_str()), buf.size(), reinterpret_cast<uint8_t *>(obuf));
+
+	result.assign(obuf, buf.size());
 	delete [] obuf;
 
 	return result;
@@ -307,8 +250,9 @@ int pc_wrap::read(bool nosys, string &buf, string &ext_cmd, int &starttls)
 
 			// psc-remote is quitting, reset crypto state
 			if (this->reset() < 0)
-				return -1;
-			printf("\r\npscl: Seen end-sequence, disabling crypto!\r\npscl: If tty is hangup, type 'reset'.\r\n");
+				printf("\r\npscl: Seen end-sequence, but resetting crypto state failed! Continuing halfdead.\r\n");
+			else
+				printf("\r\npscl: Seen end-sequence, disabling crypto!\r\npscl: If tty is hangup, type 'reset'.\r\n");
 
 		// any other command needs to be handled by external filter
 		} else if (s.find("C:") == 0)
@@ -327,14 +271,8 @@ int pc_wrap::read(bool nosys, string &buf, string &ext_cmd, int &starttls)
 
 		recent.erase(0, idx1 + 18 + 16);
 
-		if (EVP_EncryptInit_ex(w_ctx, nullptr, nullptr, nullptr, iv) != 1) {
-			err = "pc_wrap::read: EVP_EncryptInit failed.";
-			return -1;
-		}
-		if (EVP_DecryptInit_ex(r_ctx, nullptr, nullptr, nullptr, iv) != 1) {
-			err = "pc_wrap::read: EVP_DecryptInit failed.";
-			return -1;
-		}
+		AES_ctx_set_iv(&w_ctx, reinterpret_cast<uint8_t *>(iv));
+		AES_ctx_set_iv(&r_ctx, reinterpret_cast<uint8_t *>(iv));
 
 		printf("\r\npscl: Seen STARTTLS sequence, enabling crypto.\r\n");
 		seen_starttls = 1;

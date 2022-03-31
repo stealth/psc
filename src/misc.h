@@ -41,6 +41,8 @@ size_t b64_decode(const char *, unsigned char *);
 
 char *b64_encode(const char *, size_t, unsigned char *);
 
+int RAND_bytes(unsigned char *, int);
+
 enum {
 
 	STATE_INVALID		=	0,

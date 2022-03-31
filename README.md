@@ -2,7 +2,7 @@ PortShellCrypter -- PSC
 =======================
 
 This project - as well as its sister project [crash](https://github.com/stealth/crash) - belongs
-to my anti-censorship tool set that allows to setup fully working encrypted shells and TCP/UDP
+to my anti-censorship tool-set that allows to setup fully working encrypted shells and TCP/UDP
 forwarding in hostile censoring environments.
 
 [![asciicast](https://asciinema.org/a/383043.svg)](https://asciinema.org/a/383043)
@@ -36,15 +36,11 @@ web browsing sessions via portshells or modem dialups remotely.
 Build
 -----
 
-Edit the `Makefile` to reflect your pre shared keys, as defined
-at the top of the `Makefile`.
+Edit the `Makefile` to reflect your pre shared keys, as defined at the top of the `Makefile`.
 
-Then just type `make` on *Linux*.
+Then just type `make` on *Linux* and *OSX*.
 
 On *BSD*, you need to install *GNU make* and invoke `gmake` instead.
-
-On *OSX*, you need to install *OpenSSL* and declare the appropriate installation
-path inside the `Makefile` and type `make`.
 
 On *Linux*, PSC will use *Unix98* pseudo terminals, on other systems it will use *POSIX*
 pty's but that should be transparent to you. I once added *4.4BSD* pty and *SunOS*
@@ -142,8 +138,18 @@ Scripting
 
 As of version 0.64, *psc* supports scripting-sockets so you no longer need `screen` to
 get/put files or dump paste buffers to the remote console. Instead, you start your local
-session like so: `pscl -S ~/psc.script_sock`. You can then go ahead and use it as before.
-If you need to 'paste' something you do like: `pscsh -S ~/psc.script_sock -f script_/helloworld`.
+session like so:
+
+```
+~ > ./pscl -S ~/psc.script_sock
+```
+
+You can then go ahead and use it as before. If you need to 'paste' something you do like:
+
+```
+~ > ./pscsh -S ~/psc.script_sock -f script_/helloworld
+```
+
 This will 'type' the content of `script_/helloworld` to the console. While scripting,
 the stdin of `pscl` is blocked so that the injected input does not mix up with any
 typing. If `-S` is omitted in `pscsh`, `~/psc.script_sock` is used automatically.

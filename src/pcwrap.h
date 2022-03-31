@@ -29,9 +29,7 @@
 #include <stdint.h>
 #include <termios.h>
 #include <unistd.h>
-extern "C" {
-#include <openssl/evp.h>
-}
+#include "external/aes.h"
 
 namespace ns_psc {
 
@@ -46,8 +44,8 @@ private:
 	bool wsize_signalled{0};
 
 	termios d_saved_rfd_tattr;
-	EVP_CIPHER_CTX *r_ctx, *w_ctx;
-	unsigned char w_key[EVP_MAX_KEY_LENGTH]{0}, r_key[EVP_MAX_KEY_LENGTH]{0};
+	AES_ctx r_ctx, w_ctx;
+	unsigned char w_key[64]{0}, r_key[64]{0};
 	unsigned char iv[32]{0};
 
 	std::string encrypt(const std::string &);
