@@ -446,7 +446,9 @@ int b64_decode_file()
 	if (fd < 0)
 		return -1;
 
-	write(fd, b64.get(), dec_len);
+	if (write(fd, b64.get(), dec_len) < 0)
+		;	// avoid gcc warning about unused retval
+
 	close(fd);
 
 	return 0;
