@@ -19,13 +19,13 @@
 #endif
 
 struct AES_ctx {
-	uint8_t RoundKey[AES_keyExpSize]{0};
+	uint8_t RoundKey[AES_keyExpSize];
 	struct {
-		uint8_t iv[AES_BLOCKLEN]{0};
-		//uint32_t ctr32{0};
+		uint8_t iv[AES_BLOCKLEN];
+		//uint32_t ctr32;
 	} iv;
-	uint8_t xor_block[AES_BLOCKLEN]{0};
-	uint8_t xidx{0};
+	uint8_t xor_block[AES_BLOCKLEN];
+	uint8_t xidx;
 };
 
 void AES_init_ctx(struct AES_ctx *, const uint8_t *);
