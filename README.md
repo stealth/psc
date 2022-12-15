@@ -47,6 +47,14 @@ pty's but that should be transparent to you. I once added *4.4BSD* pty and *SunO
 support back in the stone age for a particular reason, so it may or may not
 build even with *Solaris*.
 
+*proudly sponsored by:*
+<p align="center">
+<a href="https://github.com/c-skills/welcome">
+<img src="https://github.com/c-skills/welcome/blob/master/logo.jpg"/>
+</a>
+</p>
+
+
 Usage
 -----
 
