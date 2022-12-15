@@ -200,7 +200,7 @@ int proxy_loop()
 		fd2state[r].state = STATE_UDPSERVER;
 	}
 
-	if (config::socks5_port != -1) {
+	if (config::socks5_fd != -1) {
 		pfds[config::socks5_fd].fd = config::socks5_fd;
 		pfds[config::socks5_fd].events = POLLIN;
 
@@ -209,7 +209,7 @@ int proxy_loop()
 		fd2state[config::socks5_fd].state = STATE_SOCKS5_ACCEPT;
 	}
 
-	if (config::socks4_port != -1) {
+	if (config::socks4_fd != -1) {
 		pfds[config::socks4_fd].fd = config::socks4_fd;
 		pfds[config::socks4_fd].events = POLLIN;
 
@@ -429,6 +429,7 @@ int proxy_loop()
 					socks4_req *s4r = reinterpret_cast<socks4_req *>(sbuf);
 
 					// expect SOCKS4 request and send positive response
+					memset(sbuf, 0, sizeof(sbuf));
 					if ((r = recv(i, sbuf, sizeof(sbuf), 0)) <= 0 || sbuf[0] != 4) {
 						close(i);
 						pfds[i].fd = -1;
@@ -468,7 +469,8 @@ int proxy_loop()
 				} else if (fd2state[i].state == STATE_SOCKS5_AUTH1) {
 
 					// expect SOCKS5 auth request (none) and send positive response
-					if ((r = recv(i, sbuf, sizeof(sbuf), 0)) != 3 || sbuf[0] != 5) {
+					memset(sbuf, 0, sizeof(sbuf));
+					if ((r = recv(i, sbuf, sizeof(sbuf), 0)) <= 0 || sbuf[0] != 5) {
 						close(i);
 						pfds[i].fd = -1;
 						pfds[i].events = 0;
@@ -492,8 +494,13 @@ int proxy_loop()
 					    (s5r->atype != 1 && s5r->atype != 4) ||	// IPv4 or IPv6
 					    s5r->cmd != 1) {				// not a TCP-connect?
 						s5r->cmd = 0x08;			// atype not supported
-						fd2state[i].obuf += string(sbuf, r);
-						pfds[i].events |= POLLOUT;		// out and expect next request
+						writen(i, sbuf, 2);
+						close(i);
+						pfds[i].fd = -1;
+						pfds[i].events = 0;
+						fd2state[i].state = STATE_INVALID;
+						fd2state[i].fd = -1;
+						fd2state[i].obuf.clear();
 						continue;
 					}
 
