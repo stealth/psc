@@ -112,7 +112,7 @@ int unix_listen(const string &path)
 	strcpy(sun.sun_path, path.c_str());
 
 	mode_t um = umask(077);
-	if (bind(sfd, reinterpret_cast<sockaddr *>(&sun), sizeof(sun)) < 0) {
+	if (::bind(sfd, reinterpret_cast<sockaddr *>(&sun), sizeof(sun)) < 0) {
 		umask(um);
 		close(sfd);
 		return -1;
