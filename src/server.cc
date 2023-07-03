@@ -1,7 +1,7 @@
 /*
  * This file is part of port shell crypter (psc).
  *
- * (C) 2006-2022 by Sebastian Krahmer,
+ * (C) 2006-2023 by Sebastian Krahmer,
  *                  sebastian [dot] krahmer [at] gmail [dot] com
  *
  * psc is free software: you can redistribute it and/or modify
@@ -53,6 +53,9 @@ struct termios exit_tattr;
 bool exit_attr_set = 0;
 
 }
+
+const string banner = "\nPortShellCrypter [pscr] v0.66 (C) 2006-2023 stealth -- github.com/stealth/psc\n\n";
+
 
 // child == bash exited, send end-sequence
 // so psc-local can reset its crypto state
@@ -457,7 +460,7 @@ int b64_decode_file()
 
 void usage(const char *argv0)
 {
-	printf("Usage: %s [-E file] [-D] [-N]\n", argv0);
+	printf("%sUsage: %s [-E file] [-D] [-N]\n", banner.c_str(), argv0);
 }
 
 
@@ -466,13 +469,6 @@ int main(int argc, char **argv)
 	setbuffer(stdin, nullptr, 0);
 	setbuffer(stdout, nullptr, 0);
 	setbuffer(stderr, nullptr, 0);
-
-	printf("\nPortShellCrypter [pscr] v0.65 (C) 2006-2022 stealth -- github.com/stealth/psc\n\n");
-
-	if (!getenv("SHELL")) {
-		printf("pscr: No $SHELL set in environment. Exiting.\n");
-		exit(1);
-	}
 
 	int c = 0;
 	bool no_nagle = 0, b64_encoded = 0;
@@ -495,6 +491,15 @@ int main(int argc, char **argv)
 		default:
 			usage(argv[0]);
 			exit(0);
+		}
+	}
+
+	if (!b64_encoded) {
+		printf("%s", banner.c_str());
+
+		if (!getenv("SHELL")) {
+			printf("pscr: No $SHELL set in environment. Exiting.\n");
+			exit(1);
 		}
 	}
 
