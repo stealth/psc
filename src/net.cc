@@ -127,35 +127,71 @@ int unix_listen(const string &path)
 }
 
 
-static int connect(int type, const string &ip, const string &port)
+static map<string, struct addrinfo *> resolv_cache;
+
+
+static int connect(int type, const string &name, const string &port)
 {
+
+	// if cache has grown largely, drop it and make new
+	if (resolv_cache.size() > 1024) {
+		for (const auto &it : resolv_cache)
+			freeaddrinfo(it.second);
+		resolv_cache.clear();
+	}
+
 	int r = 0, sock_fd = -1, one = 1;
 	socklen_t len = sizeof(one);
 
 	addrinfo hint, *tai = nullptr;
 	memset(&hint, 0, sizeof(hint));
 	hint.ai_socktype = type;
+	hint.ai_flags = AI_NUMERICHOST|AI_NUMERICSERV;
 
-	if ((r = getaddrinfo(ip.c_str(), port.c_str(), &hint, &tai)) < 0)
+	bool can_free = 1;
+
+	if ((r = getaddrinfo(name.c_str(), port.c_str(), &hint, &tai)) != 0) {
+
+		can_free = 0;
+
+		string key = name + ":" + port;
+
+		auto it = resolv_cache.find(key);
+
+		if (it == resolv_cache.end()) {
+
+			hint.ai_flags = AI_NUMERICSERV;
+			if ((r = getaddrinfo(name.c_str(), port.c_str(), &hint, &tai)) != 0)
+				return -1;
+
+			resolv_cache[key] = tai;
+
+		} else
+			tai = it->second;
+	}
+
+	if ((sock_fd = socket(tai->ai_family, type, 0)) < 0) {
+		if (can_free)
+			freeaddrinfo(tai);
 		return -1;
+	}
 
-	unique_ptr<addrinfo, decltype(&freeaddrinfo)> ai(tai, freeaddrinfo);
-
-	if ((sock_fd = socket(ai->ai_family, type, 0)) < 0)
-		return -1;
-
-	setsockopt(sock_fd, IPPROTO_TCP, TCP_NODELAY, &one, len);
+	if (type == SOCK_STREAM)
+		setsockopt(sock_fd, IPPROTO_TCP, TCP_NODELAY, &one, len);
 
 	int flags = fcntl(sock_fd, F_GETFL);
 	fcntl(sock_fd, F_SETFL, flags|O_NONBLOCK);
 
-	if (::connect(sock_fd, ai->ai_addr, ai->ai_addrlen) < 0 && errno != EINPROGRESS) {
+	if (::connect(sock_fd, tai->ai_addr, tai->ai_addrlen) < 0 && errno != EINPROGRESS) {
 		close(sock_fd);
+		if (can_free)
+			freeaddrinfo(tai);
 		return -1;
 	}
 
 	return sock_fd;
 }
+
 
 
 static int udp_connect(const string &ip, const string &port)
@@ -184,22 +220,24 @@ static int tcp_connect(const string &ip, const string &port)
 
 int cmd_handler(const string &cmd, state *fd2state, pollfd *pfds, uint32_t flags)
 {
-	char C[16] = {0}, proto[16] = {0}, op[16] = {0}, host[128] = {0}, port[16] = {0}, id[16] = {0};
+	char C[16] = {0}, proto[16] = {0}, op[16] = {0}, host[128] = {0};
+	uint16_t port = 0, id = 0;
 	int sock = -1;
 
 	// ID is the logical channel to distinguish between multiple same host:port connections.
 	// The accepted socket fd of the local psc part is unique and good for it.
-	if (sscanf(cmd.c_str(), "%15[^:]:%15[^:]:%15[^:]:%127[^/]/%15[^/]/%15[^/]/", C, proto, op, host, port, id) != 6)
+	if (sscanf(cmd.c_str(), "%15[^:]:%15[^:]:%15[^:]:%127[^/]/%04hx/%04hx/", C, proto, op, host, &port, &id) != 6)
 		return -1;
 
-	const string node = string(host) + "/" + string(port) + "/" + id + "/";
+	auto slash = cmd.find("/");
+	const string node = string(host) + cmd.substr(slash, 11);
 
 	if (C[0] != 'C' || (proto[0] != 'T' && proto[0] != 'U'))
 		return -1;
 
 	// open new non-blocking connection
 	if (cmd.find("C:T:N:") == 0 && (flags & NETCMD_SEND_ALLOW)) {
-		if ((sock = tcp_connect(host, port)) < 0)
+		if ((sock = tcp_connect(host, to_string(port))) < 0)
 			return -1;
 
 		pfds[sock].revents = 0;
@@ -210,7 +248,6 @@ int cmd_handler(const string &cmd, state *fd2state, pollfd *pfds, uint32_t flags
 		fd2state[sock].state = STATE_CONNECT;
 		fd2state[sock].obuf.clear();
 		fd2state[sock].odgrams.clear();
-		fd2state[sock].ulports.clear();
 		fd2state[sock].rnode = node;
 		fd2state[sock].time = time(nullptr);
 
@@ -229,7 +266,6 @@ int cmd_handler(const string &cmd, state *fd2state, pollfd *pfds, uint32_t flags
 		fd2state[sock].state = STATE_CONNECTED;
 		fd2state[sock].obuf.clear();
 		fd2state[sock].odgrams.clear();
-		fd2state[sock].ulports.clear();
 		fd2state[sock].time = time(nullptr);
 
 	// finish connection
@@ -252,7 +288,6 @@ int cmd_handler(const string &cmd, state *fd2state, pollfd *pfds, uint32_t flags
 		fd2state[sock].state = STATE_CLOSING;
 		fd2state[sock].obuf.clear();
 		fd2state[sock].odgrams.clear();
-		fd2state[sock].ulports.clear();
 		fd2state[sock].time = time(nullptr);
 
 	// Send or receive data. No NETCMD_SEND_ALLOW check, since the node will not be in
@@ -273,7 +308,7 @@ int cmd_handler(const string &cmd, state *fd2state, pollfd *pfds, uint32_t flags
 		if (it == udp_nodes2sock.end()) {
 			if (!(flags & NETCMD_SEND_ALLOW))
 				return 0;
-			if ((sock = udp_connect(host, port)) < 0)
+			if ((sock = udp_connect(host, to_string(port))) < 0)
 				return -1;
 			udp_nodes2sock[node] = sock;
 
@@ -290,9 +325,7 @@ int cmd_handler(const string &cmd, state *fd2state, pollfd *pfds, uint32_t flags
 		pfds[sock].events = POLLIN;
 
 		if (cmd.size() > 6 + node.size()) {
-			fd2state[sock].odgrams.push_back(cmd.substr(6 + node.size()));	// strip off data part
-			fd2state[sock].ulports.push_back((uint16_t)strtoul(id, nullptr, 10));
-
+			fd2state[sock].odgrams.push_back({id, cmd.substr(6 + node.size())});	// strip off data part
 			pfds[sock].events |= POLLOUT;
 		}
 		fd2state[sock].time = time(nullptr);

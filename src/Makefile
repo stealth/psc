@@ -4,8 +4,10 @@
 KEY1=\"secret1\"
 KEY2=\"secret2\"
 
+BANNER=\"psc-2022-STARTTLS-\"
+
 CXX=c++
-DEFS=-DPSC_READ_KEY=$(KEY1) -DPSC_WRITE_KEY=$(KEY2)
+DEFS=-DPSC_READ_KEY=$(KEY1) -DPSC_WRITE_KEY=$(KEY2) -DSTART_BANNER=$(BANNER)
 CXXFLAGS=-c -Wall -O2 -std=c++11 -pedantic
 
 .PHONY: all clean
@@ -14,7 +16,10 @@ ifeq ($(shell uname), Linux)
 DEFS+=-DHAVE_UNIX98
 endif
 
-all: pscl pscr pscsh
+all: warn pscl pscr pscsh
+
+warn:
+	@echo "Hint: Do not 'make' inside pscl session, as it echos PSC STARTTLS sequence." || true
 
 clean:
 	rm -f *.o
