@@ -42,6 +42,8 @@ map<string, string> tcp_listens, udp_listens;
 
 int socks5_port = -1, socks5_fd = -1, socks4_port = -1, socks4_fd = -1, script_sock = -1;
 
+int socks5_dns = 0;
+
 string local_proxy_ip = "127.0.0.1";
 
 }

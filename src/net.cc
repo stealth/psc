@@ -127,35 +127,71 @@ int unix_listen(const string &path)
 }
 
 
-static int connect(int type, const string &ip, const string &port)
+static map<string, struct addrinfo *> resolv_cache;
+
+
+static int connect(int type, const string &name, const string &port)
 {
+
+	// if cache has grown largely, drop it and make new
+	if (resolv_cache.size() > 1024) {
+		for (const auto &it : resolv_cache)
+			freeaddrinfo(it.second);
+		resolv_cache.clear();
+	}
+
 	int r = 0, sock_fd = -1, one = 1;
 	socklen_t len = sizeof(one);
 
 	addrinfo hint, *tai = nullptr;
 	memset(&hint, 0, sizeof(hint));
 	hint.ai_socktype = type;
+	hint.ai_flags = AI_NUMERICHOST|AI_NUMERICSERV;
 
-	if ((r = getaddrinfo(ip.c_str(), port.c_str(), &hint, &tai)) < 0)
+	bool can_free = 1;
+
+	if ((r = getaddrinfo(name.c_str(), port.c_str(), &hint, &tai)) != 0) {
+
+		can_free = 0;
+
+		string key = name + ":" + port;
+
+		auto it = resolv_cache.find(key);
+
+		if (it == resolv_cache.end()) {
+
+			hint.ai_flags = AI_NUMERICSERV;
+			if ((r = getaddrinfo(name.c_str(), port.c_str(), &hint, &tai)) != 0)
+				return -1;
+
+			resolv_cache[key] = tai;
+
+		} else
+			tai = it->second;
+	}
+
+	if ((sock_fd = socket(tai->ai_family, type, 0)) < 0) {
+		if (can_free)
+			freeaddrinfo(tai);
 		return -1;
+	}
 
-	unique_ptr<addrinfo, decltype(&freeaddrinfo)> ai(tai, freeaddrinfo);
-
-	if ((sock_fd = socket(ai->ai_family, type, 0)) < 0)
-		return -1;
-
-	setsockopt(sock_fd, IPPROTO_TCP, TCP_NODELAY, &one, len);
+	if (type == SOCK_STREAM)
+		setsockopt(sock_fd, IPPROTO_TCP, TCP_NODELAY, &one, len);
 
 	int flags = fcntl(sock_fd, F_GETFL);
 	fcntl(sock_fd, F_SETFL, flags|O_NONBLOCK);
 
-	if (::connect(sock_fd, ai->ai_addr, ai->ai_addrlen) < 0 && errno != EINPROGRESS) {
+	if (::connect(sock_fd, tai->ai_addr, tai->ai_addrlen) < 0 && errno != EINPROGRESS) {
 		close(sock_fd);
+		if (can_free)
+			freeaddrinfo(tai);
 		return -1;
 	}
 
 	return sock_fd;
 }
+
 
 
 static int udp_connect(const string &ip, const string &port)

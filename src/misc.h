@@ -72,6 +72,7 @@ enum {
 
 	NETCMD_SEND_ALLOW	=	1,
 
+	MAX_NAME_LEN		=	39,
 	FDID_MAX		=	65535	// id field of net cmds encoded as %04hx, so socket fds must not be larger
 };
 
@@ -92,6 +93,8 @@ namespace config {
 extern std::map<std::string, std::string> tcp_listens, udp_listens;
 
 extern int socks5_port, socks5_fd, socks4_port, socks4_fd, script_sock;
+
+extern bool socks5_dns;
 
 extern std::string local_proxy_ip;
 
