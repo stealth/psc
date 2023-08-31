@@ -1,7 +1,7 @@
 /*
  * This file is part of port shell crypter (psc).
  *
- * (C) 2006-2022 by Sebastian Krahmer,
+ * (C) 2006-2023 by Sebastian Krahmer,
  *                  sebastian [dot] krahmer [at] gmail [dot] com
  *
  * psc is free software: you can redistribute it and/or modify
@@ -41,6 +41,9 @@
 using namespace std;
 
 namespace ns_psc {
+
+
+const string PSC_STARTTLS = START_BANNER;
 
 
 pc_wrap::pc_wrap(int rfd, int wfd)
@@ -266,10 +269,10 @@ int pc_wrap::read(bool nosys, string &buf, string &ext_cmd, int &starttls)
 
 	// as slow links read output one-bye-one or in small chunks, we need
 	// to slide-match STARTTLS sequence
-	if (recent.size() >= 18 + 16 && (idx1 = recent.find("psc-2020-STARTTLS-")) != string::npos) {
-		memcpy(iv, recent.c_str() + idx1 + 18, 16);
+	if (recent.size() >= PSC_STARTTLS.size() + 16 && (idx1 = recent.find(PSC_STARTTLS)) != string::npos) {
+		memcpy(iv, recent.c_str() + idx1 + PSC_STARTTLS.size(), 16);
 
-		recent.erase(0, idx1 + 18 + 16);
+		recent.erase(0, idx1 + PSC_STARTTLS.size() + 16);
 
 		AES_ctx_set_iv(&w_ctx, reinterpret_cast<uint8_t *>(iv));
 		AES_ctx_set_iv(&r_ctx, reinterpret_cast<uint8_t *>(iv));

@@ -184,22 +184,24 @@ static int tcp_connect(const string &ip, const string &port)
 
 int cmd_handler(const string &cmd, state *fd2state, pollfd *pfds, uint32_t flags)
 {
-	char C[16] = {0}, proto[16] = {0}, op[16] = {0}, host[128] = {0}, port[16] = {0}, id[16] = {0};
+	char C[16] = {0}, proto[16] = {0}, op[16] = {0}, host[128] = {0};
+	uint16_t port = 0, id = 0;
 	int sock = -1;
 
 	// ID is the logical channel to distinguish between multiple same host:port connections.
 	// The accepted socket fd of the local psc part is unique and good for it.
-	if (sscanf(cmd.c_str(), "%15[^:]:%15[^:]:%15[^:]:%127[^/]/%15[^/]/%15[^/]/", C, proto, op, host, port, id) != 6)
+	if (sscanf(cmd.c_str(), "%15[^:]:%15[^:]:%15[^:]:%127[^/]/%04hx/%04hx/", C, proto, op, host, &port, &id) != 6)
 		return -1;
 
-	const string node = string(host) + "/" + string(port) + "/" + id + "/";
+	auto slash = cmd.find("/");
+	const string node = string(host) + cmd.substr(slash, 11);
 
 	if (C[0] != 'C' || (proto[0] != 'T' && proto[0] != 'U'))
 		return -1;
 
 	// open new non-blocking connection
 	if (cmd.find("C:T:N:") == 0 && (flags & NETCMD_SEND_ALLOW)) {
-		if ((sock = tcp_connect(host, port)) < 0)
+		if ((sock = tcp_connect(host, to_string(port))) < 0)
 			return -1;
 
 		pfds[sock].revents = 0;
@@ -210,7 +212,6 @@ int cmd_handler(const string &cmd, state *fd2state, pollfd *pfds, uint32_t flags
 		fd2state[sock].state = STATE_CONNECT;
 		fd2state[sock].obuf.clear();
 		fd2state[sock].odgrams.clear();
-		fd2state[sock].ulports.clear();
 		fd2state[sock].rnode = node;
 		fd2state[sock].time = time(nullptr);
 
@@ -229,7 +230,6 @@ int cmd_handler(const string &cmd, state *fd2state, pollfd *pfds, uint32_t flags
 		fd2state[sock].state = STATE_CONNECTED;
 		fd2state[sock].obuf.clear();
 		fd2state[sock].odgrams.clear();
-		fd2state[sock].ulports.clear();
 		fd2state[sock].time = time(nullptr);
 
 	// finish connection
@@ -252,7 +252,6 @@ int cmd_handler(const string &cmd, state *fd2state, pollfd *pfds, uint32_t flags
 		fd2state[sock].state = STATE_CLOSING;
 		fd2state[sock].obuf.clear();
 		fd2state[sock].odgrams.clear();
-		fd2state[sock].ulports.clear();
 		fd2state[sock].time = time(nullptr);
 
 	// Send or receive data. No NETCMD_SEND_ALLOW check, since the node will not be in
@@ -273,7 +272,7 @@ int cmd_handler(const string &cmd, state *fd2state, pollfd *pfds, uint32_t flags
 		if (it == udp_nodes2sock.end()) {
 			if (!(flags & NETCMD_SEND_ALLOW))
 				return 0;
-			if ((sock = udp_connect(host, port)) < 0)
+			if ((sock = udp_connect(host, to_string(port))) < 0)
 				return -1;
 			udp_nodes2sock[node] = sock;
 
@@ -290,9 +289,7 @@ int cmd_handler(const string &cmd, state *fd2state, pollfd *pfds, uint32_t flags
 		pfds[sock].events = POLLIN;
 
 		if (cmd.size() > 6 + node.size()) {
-			fd2state[sock].odgrams.push_back(cmd.substr(6 + node.size()));	// strip off data part
-			fd2state[sock].ulports.push_back((uint16_t)strtoul(id, nullptr, 10));
-
+			fd2state[sock].odgrams.push_back({id, cmd.substr(6 + node.size())});	// strip off data part
 			pfds[sock].events |= POLLOUT;
 		}
 		fd2state[sock].time = time(nullptr);

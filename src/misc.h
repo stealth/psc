@@ -70,7 +70,9 @@ enum {
 	MTU			=	1500,
 	BLOCK_SIZE		=	2*MTU,
 
-	NETCMD_SEND_ALLOW	=	1
+	NETCMD_SEND_ALLOW	=	1,
+
+	FDID_MAX		=	65535	// id field of net cmds encoded as %04hx, so socket fds must not be larger
 };
 
 struct state {
@@ -79,10 +81,8 @@ struct state {
 	int state{STATE_INVALID};
 	std::string obuf{""}, rnode{""};
 
-	// must only be pushed/popped in pairs. Each reply datagram needs a port on 127.0.0.1
-	// where it is sent to
-	std::deque<std::string> odgrams;
-	std::deque<uint16_t> ulports;
+	// deque of { UDP id, data } of UDP datagrams in out queue
+	std::deque<std::pair<uint16_t, std::string>> odgrams;
 };
 
 }
@@ -92,6 +92,8 @@ namespace config {
 extern std::map<std::string, std::string> tcp_listens, udp_listens;
 
 extern int socks5_port, socks5_fd, socks4_port, socks4_fd, script_sock;
+
+extern std::string local_proxy_ip;
 
 }
 

@@ -84,7 +84,8 @@ void sig_win(int)
 void usage(const char *argv0)
 {
 	printf("Usage: %s\t[-4 socks4 lport] [-5 socks5 lport] [-T lport:[ip]:rport]\n"
-	       "\t\t[-U lport:[ip]:rport] [-S scripting socket]\n\n", argv0);
+	       "\t\t[-U lport:[ip]:rport] [-X local proxy IP (127.0.0.1 dflt)]\n"
+	       "\t\t[-S scripting socket]\n\n", argv0);
 }
 
 
@@ -125,6 +126,10 @@ int proxy_loop()
 	struct rlimit rl;
 	if (getrlimit(RLIMIT_NOFILE, &rl) < 0)
 		die("getrlimit");
+	if (rl.rlim_cur > FDID_MAX) {
+		rl.rlim_cur = rl.rlim_max = FDID_MAX;
+		setrlimit(RLIMIT_NOFILE, &rl);
+	}
 
 	if ((pid = fork()) == 0) {
 		char *a[] = {getenv("SHELL"), nullptr};
@@ -179,7 +184,7 @@ int proxy_loop()
 	pfds[pt.master()].events = POLLIN;
 
 	for (auto it = config::tcp_listens.begin(); it != config::tcp_listens.end(); ++it) {
-		if ((r = tcp_listen("127.0.0.1", it->first)) < 0)
+		if ((r = tcp_listen(config::local_proxy_ip, it->first)) < 0)
 			continue;
 		pfds[r].fd = r;
 		pfds[r].events = POLLIN;
@@ -190,7 +195,7 @@ int proxy_loop()
 	}
 
 	for (auto it = config::udp_listens.begin(); it != config::udp_listens.end(); ++it) {
-		if ((r = udp_listen("127.0.0.1", it->first)) < 0)
+		if ((r = udp_listen(config::local_proxy_ip, it->first)) < 0)
 			continue;
 		pfds[r].fd = r;
 		pfds[r].events = POLLIN;
@@ -227,12 +232,10 @@ int proxy_loop()
 		fd2state[config::script_sock].state = STATE_SCRIPT_ACCEPT;
 	}
 
-
-	// Build a local address for sending reply UDP dgrams. Only the dst port is unknown yet
-	// and will be constructed from the ID part of the IP/port/ID header
-	struct sockaddr_in lsin;
-	lsin.sin_family = AF_INET;
-	inet_pton(AF_INET, "127.0.0.1", &lsin.sin_addr);
+	// Since we have no fd per "connection" for UDP, we need to keep track of
+	// local sockaddrs <-> id by ourself in order to know to which dst to send replies
+	// we receive from remote
+	udp_node2id udp_nodes2id;
 
 	int max_fd = rl.rlim_cur - 1, script_fd = -1;
 
@@ -366,7 +369,7 @@ int proxy_loop()
 					// append ID part of host/port/id/ header. We use the accepted sock fd
 					// as ID, as this is unique and identifies the TCP connection
 					char id[16] = {0};
-					snprintf(id, sizeof(id) - 1, "%d/", afd);
+					snprintf(id, sizeof(id) - 1, "%04hx/", afd);
 
 					pfds[afd].fd = afd;
 					pfds[afd].events = 0;	// dont accept data until remote peer established proxy conn
@@ -453,7 +456,7 @@ int proxy_loop()
 					// Now that we know where connection is going to, we can build
 					// IP/port/ID header
 					char hdr[256] = {0};
-					snprintf(hdr, sizeof(hdr) - 1, "%s/%d/%d/", dst, rport, i);
+					snprintf(hdr, sizeof(hdr) - 1, "%s/%04hx/%04hx/", dst, rport, i);
 
 					fd2state[i].rnode = hdr;
 					fd2state[i].state = STATE_CONNECT;
@@ -518,7 +521,7 @@ int proxy_loop()
 					// Now that we know where connection is going to, we can build
 					// IP/port/ID header
 					char hdr[256] = {0};
-					snprintf(hdr, sizeof(hdr) - 1, "%s/%d/%d/", dst, rport, i);
+					snprintf(hdr, sizeof(hdr) - 1, "%s/%04hx/%04hx/", dst, rport, i);
 
 					fd2state[i].rnode = hdr;
 					fd2state[i].state = STATE_CONNECT;
@@ -536,21 +539,20 @@ int proxy_loop()
 
 				} else if (fd2state[i].state == STATE_UDPSERVER) {
 
-					// Always listens on 127.0.0.1, so this is always AF_INET
-					sockaddr_in sin;
-					socklen_t slen = sizeof(sin);
-					if ((r = recvfrom(i, sbuf, sizeof(sbuf), 0, reinterpret_cast<sockaddr *>(&sin), &slen)) <= 0)
+					char sin[sizeof(sockaddr_in) + sizeof(sockaddr_in6)] = {0};
+					socklen_t sinlen = sizeof(sin);
+					if ((r = recvfrom(i, sbuf, sizeof(sbuf), 0, reinterpret_cast<sockaddr *>(&sin), &sinlen)) <= 0)
 						continue;
 
-					// in UDP case, we use the local port as ID.
+					// in UDP case, we need to generate a unique ID based on dgram origin. If the origin was already
+					// given an unique ID, put() will find and return it transparently
 					char id[16] = {0};
-					snprintf(id, sizeof(id) - 1, "%d/", sin.sin_port);
+					snprintf(id, sizeof(id) - 1, "%04hx/", udp_nodes2id.put(string(sin, sinlen)));
 
+					// Note here that ID needs to be appended, unlike with TCP.
+					fd2state[pt.master()].obuf += psc->possibly_b64encrypt("C:U:S:", fd2state[i].rnode + id + string(sbuf, r));
 					pfds[pt.master()].events |= POLLOUT;
 
-					// Note here that ID needs to be appended, unlike with TCP. This is since sock fd doesnt
-					// distinguish sessions but local ports do this in UDP mode
-					fd2state[pt.master()].obuf += psc->possibly_b64encrypt("C:U:S:", fd2state[i].rnode + id + string(sbuf, r));
 					fd2state[i].time = now;
 
 					udp_nodes2sock[fd2state[i].rnode + id] = i;
@@ -636,13 +638,12 @@ int proxy_loop()
 					fd2state[i].time = now;
 					fd2state[i].obuf.erase(0, r);
 				} else if (fd2state[i].state == STATE_UDPSERVER) {
-					string &dgram = fd2state[i].odgrams.front();
-					lsin.sin_port = fd2state[i].ulports.front();	// ID == dst port of reply datagram already in network order
-					if ((r = sendto(i, dgram.c_str(), dgram.size(), 0, reinterpret_cast<const sockaddr *>(&lsin), sizeof(lsin))) <= 0)
+					string &dgram = fd2state[i].odgrams.front().second;
+					string sin = udp_nodes2id.get(fd2state[i].odgrams.front().first); // map id back to originating sockaddr
+					if ((r = sendto(i, dgram.c_str(), dgram.size(), 0, reinterpret_cast<const sockaddr *>(sin.c_str()), sin.size())) <= 0)
 						continue;
 
 					fd2state[i].odgrams.pop_front();
-					fd2state[i].ulports.pop_front();
 					fd2state[i].time = now;
 
 				} else if (fd2state[i].state == STATE_SCRIPT_IO) {
@@ -681,7 +682,7 @@ int proxy_loop()
 
 int main(int argc, char **argv)
 {
-	printf("\nPortShellCrypter [pscl] v0.66 (C) 2006-2023 stealth -- github.com/stealth/psc\n\n");
+	printf("\nPortShellCrypter [pscl] v0.67 (C) 2006-2023 stealth -- github.com/stealth/psc\n\n");
 
 	if (!getenv("SHELL")) {
 		printf("pscl: No $SHELL set in environment. Exiting.\n");
@@ -714,33 +715,39 @@ int main(int argc, char **argv)
 		die("pscl: sigaction");
 
 	int c = -1;
-	char lport[16] = {0}, ip[128] = {0}, rport[16] = {0};
+	char lport[16] = {0}, ip[128] = {0}, port_hex[16] = {0};
+	uint16_t rport = 0;
 
-	while ((c = getopt(argc, argv, "T:U:5:4:S:h")) != -1) {
+	while ((c = getopt(argc, argv, "T:U:X:5:4:S:h")) != -1) {
 		switch (c) {
 		case 'T':
-			if (sscanf(optarg, "%15[0-9]:[%127[^]]]:%15[0-9]", lport, ip, rport) == 3) {
-				config::tcp_listens[lport] = string(ip) + "/" + string(rport) + "/";
-				printf("pscl: set up local TCP port %s to proxy to %s:%s @ remote.\n", lport, ip, rport);
+			if (sscanf(optarg, "%15[0-9]:[%127[^]]]:%hu", lport, ip, &rport) == 3) {
+				snprintf(port_hex, sizeof(port_hex), "%04hx", rport);
+				config::tcp_listens[lport] = string(ip) + "/" + string(port_hex) + "/";
+				printf("pscl: set up local TCP port %s to proxy to %s:%hu @ remote.\n", lport, ip, rport);
 			}
 			break;
 		case 'U':
-			if (sscanf(optarg, "%15[0-9]:[%127[^]]]:%15[0-9]", lport, ip, rport) == 3) {
-				config::udp_listens[lport] = string(ip) + "/" + string(rport) + "/";
-				printf("pscl: set up local UDP port %s to proxy to %s:%s @ remote.\n", lport, ip, rport);
+			if (sscanf(optarg, "%15[0-9]:[%127[^]]]:%hu", lport, ip, &rport) == 3) {
+				snprintf(port_hex, sizeof(port_hex), "%04hx", rport);
+				config::udp_listens[lport] = string(ip) + "/" + string(port_hex) + "/";
+				printf("pscl: set up local UDP port %s to proxy to %s:%hu @ remote.\n", lport, ip, rport);
 			}
+			break;
+		case 'X':
+			config::local_proxy_ip = optarg;
 			break;
 		case '4':
 			if (config::socks4_fd == -1) {
 				config::socks4_port = strtoul(optarg, nullptr, 10);
-				if ((config::socks4_fd = tcp_listen("127.0.0.1", optarg)) > 0)
+				if ((config::socks4_fd = tcp_listen(config::local_proxy_ip, optarg)) > 0)
 					printf("pscl: set up SOCKS4 port on %s\n", optarg);
 			}
 			break;
 		case '5':
 			if (config::socks5_fd == -1) {
 				config::socks5_port = strtoul(optarg, nullptr, 10);
-				if ((config::socks5_fd = tcp_listen("127.0.0.1", optarg)) > 0)
+				if ((config::socks5_fd = tcp_listen(config::local_proxy_ip, optarg)) > 0)
 					printf("pscl: set up SOCKS5 port on %s\n", optarg);
 			}
 			break;

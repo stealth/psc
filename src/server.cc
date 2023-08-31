@@ -54,7 +54,11 @@ bool exit_attr_set = 0;
 
 }
 
-const string banner = "\nPortShellCrypter [pscr] v0.66 (C) 2006-2023 stealth -- github.com/stealth/psc\n\n";
+const string banner = "\nPortShellCrypter [pscr] v0.67 (C) 2006-2023 stealth -- github.com/stealth/psc\n\n";
+
+
+// magic banner to start encryption. If changed here, also change in pcwrap.cc
+const string PSC_STARTTLS = START_BANNER;
 
 
 // child == bash exited, send end-sequence
@@ -134,7 +138,7 @@ int proxy_loop()
 	if (psc.init(PSC_READ_KEY, PSC_WRITE_KEY, 1) < 0)
 		die(psc.why());
 
-	printf("psc-2020-STARTTLS-%s", psc.get_iv());
+	printf("%s%s", PSC_STARTTLS.c_str(), psc.get_iv());
 	if (psc.enable_crypto() < 0)
 		die(psc.why());
 
@@ -340,14 +344,13 @@ int proxy_loop()
 
 					fd2state[i].obuf.erase(0, r);
 				} else if (fd2state[i].state == STATE_UDPCLIENT) {
-					string &dgram = fd2state[i].odgrams.front();
+					string &dgram = fd2state[i].odgrams.front().second;
 					// No need to sendto(), each socket with ID is connect()'ed since -U binding already knows
 					// the remote IP:port to send to
 					if ((r = send(i, dgram.c_str(), dgram.size(), 0)) <= 0)
 						continue;
 
 					fd2state[i].odgrams.pop_front();
-					fd2state[i].ulports.pop_front();	// unused in server part; yet filled in external cmd_handler()
 				}
 
 				if (fd2state[i].obuf.empty() && fd2state[i].odgrams.empty())
