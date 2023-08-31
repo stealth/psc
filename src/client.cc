@@ -85,7 +85,7 @@ void usage(const char *argv0)
 {
 	printf("Usage: %s\t[-4 socks4 lport] [-5 socks5 lport] [-T lport:[ip]:rport]\n"
 	       "\t\t[-U lport:[ip]:rport] [-X local proxy IP (127.0.0.1 dflt)]\n"
-	       "\t\t[-S scripting socket]\n\n", argv0);
+	       "\t\t[-S scripting socket] [-N]\n\n", argv0);
 }
 
 
