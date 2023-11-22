@@ -469,9 +469,9 @@ void usage(const char *argv0)
 
 int main(int argc, char **argv)
 {
-	setbuffer(stdin, nullptr, 0);
-	setbuffer(stdout, nullptr, 0);
-	setbuffer(stderr, nullptr, 0);
+	setvbuf(stdin, nullptr, _IONBF, 0);
+	setvbuf(stdout, nullptr, _IONBF, 0);
+	setvbuf(stderr, nullptr, _IONBF, 0);
 
 	int c = 0;
 	bool no_nagle = 0, b64_encoded = 0;

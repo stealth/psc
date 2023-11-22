@@ -4,7 +4,10 @@
 KEY1=\"secret1\"
 KEY2=\"secret2\"
 
-BANNER=\"psc-2022-STARTTLS-\"
+# 'p' encoded in hex so you can dump Makefile in pscl
+BANNER=\"\\x70sc-2022-STARTTLS-\"
+
+POSIX=-D_POSIX_C_SOURCE=200112L -D_XOPEN_SOURCE=600
 
 CXX=c++
 DEFS=-DPSC_READ_KEY=$(KEY1) -DPSC_WRITE_KEY=$(KEY2) -DSTART_BANNER=$(BANNER)
@@ -14,6 +17,18 @@ CXXFLAGS=-c -Wall -O2 -std=c++11 -pedantic
 
 ifeq ($(shell uname), Linux)
 DEFS+=-DHAVE_UNIX98
+DEFS+=$(POSIX)
+else ifeq ($(shell uname), NetBSD)
+
+else ifeq ($(shell uname), FreeBSD)
+
+else ifeq ($(shell uname), OpenBSD)
+
+else ifeq ($(shell uname), Solaris)
+
+# Cygwin
+else
+DEFS+=$(POSIX)
 endif
 
 all: warn pscl pscr pscsh

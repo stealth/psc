@@ -67,8 +67,10 @@ static int listen(int type, const string &ip, const string &port)
 	fcntl(sock_fd, F_SETFL, flags|O_NONBLOCK);
 
 	int one = 1;
+#ifdef SO_REUSEPORT
 	setsockopt(sock_fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one));
 	one = 1;
+#endif
 	setsockopt(sock_fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
 
 	if (::bind(sock_fd, ai->ai_addr, ai->ai_addrlen) < 0)

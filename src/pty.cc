@@ -18,10 +18,6 @@
  * along with psc.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifdef __linux__
-#define _POSIX_C_SOURCE  200809L
-#endif
-
 #include "pty.h"
 #include <sys/types.h>
 #include <cstdio>

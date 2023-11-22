@@ -28,7 +28,7 @@ for example via:
 Just imagine you would have an invisible ppp session inside your shell session,
 without the remote peer actually supporting ppp.
 
-It runs on *Linux, Android, OSX, FreeBSD, NetBSD* and (possibly) *OpenBSD*.
+It runs on *Linux, Android, OSX, Windows, FreeBSD, NetBSD* and (possibly) *OpenBSD*.
 
 PSC also includes *SOCKS4* and *SOCKS5* proxy support in order to have actual
 web browsing sessions via portshells or modem dialups remotely.
@@ -40,7 +40,10 @@ Edit the `Makefile` to reflect your pre shared keys, as defined at the top of th
 
 Then just type `make` on *Linux* and *OSX*.
 
-On *BSD*, you need to install *GNU make* and invoke `gmake` instead.
+On *BSD* you need to install *GNU make* and invoke `gmake` instead.
+
+On *Windows* you need to install [cygwin](https://cygwin.com/install.html) and select
+the appropriate `gcc, gcc-g++, make` and `git` packages.
 
 On *Linux*, PSC will use *Unix98* pseudo terminals, on other systems it will use *POSIX*
 pty's but that should be transparent to you. I once added *4.4BSD* pty and *SunOS*
