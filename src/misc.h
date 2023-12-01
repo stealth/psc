@@ -62,6 +62,9 @@ enum {
 	STATE_SOCKS4_AUTH	=	14,
 	STATE_SCRIPT_ACCEPT	=	15,
 	STATE_SCRIPT_IO		=	16,
+	STATE_BCMD_ACCEPT	=	17,
+	STATE_BCMD_CONNECT	=	18,
+	STATE_BCMD_CONNECTED	=	19,
 
 	CLOSING_TIME		=	10,
 	CONNECT_TIME		=	30,
@@ -71,6 +74,9 @@ enum {
 	BLOCK_SIZE		=	2*MTU,
 
 	NETCMD_SEND_ALLOW	=	1,
+
+	BCMD_PTY_SPEED		=	115200,
+	//BCMD_PTY_SPEED		=	38400,
 
 	MAX_NAME_LEN		=	39,
 	FDID_MAX		=	65535	// id field of net cmds encoded as %04hx, so socket fds must not be larger
@@ -90,7 +96,7 @@ struct state {
 
 namespace config {
 
-extern std::map<std::string, std::string> tcp_listens, udp_listens;
+extern std::map<std::string, std::string> tcp_listens, udp_listens, bcmd_tcp_listens;
 
 extern int socks5_port, socks5_fd, socks4_port, socks4_fd, script_sock;
 

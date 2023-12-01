@@ -85,7 +85,20 @@ void usage(const char *argv0)
 {
 	printf("Usage: %s\t[-4 socks4 lport] [-5 socks5 lport] [-T lport:[ip]:rport]\n"
 	       "\t\t[-U lport:[ip]:rport] [-X local proxy IP (127.0.0.1 dflt)]\n"
-	       "\t\t[-S scripting socket] [-N]\n\n", argv0);
+	       "\t\t[-B lport:[bounce cmd] [-S scripting socket] [-N]\n\n", argv0);
+}
+
+
+// do not use replace_if() for easier C++98 ports
+string trim_bcmd_output(const string &s)
+{
+	string ret = s.substr(0, 75);
+	size_t retl = ret.size();
+	for (size_t i = 0; i < retl; ++i) {
+		if (ret[i] < 32 || ret[i] > 125)
+			ret[i] = '.';
+	}
+	return ret;
 }
 
 
@@ -98,7 +111,7 @@ int proxy_loop()
 	pty pt;
 #endif
 	pid_t pid;
-	int r, afd = -1, i;
+	int r, afd = -1, i, bcmd_accept_fd = -1;
 
 	char sbuf[BLOCK_SIZE/2] = {0};	// 1 MTU
 	struct termios tattr;
@@ -205,6 +218,18 @@ int proxy_loop()
 		fd2state[r].state = STATE_UDPSERVER;
 	}
 
+	// bouncing via bounce command
+	for (auto it = config::bcmd_tcp_listens.begin(); it != config::bcmd_tcp_listens.end(); ++it) {
+		if ((r = tcp_listen(config::local_proxy_ip, it->first)) < 0)
+			continue;
+		pfds[r].fd = r;
+		pfds[r].events = POLLIN;
+
+		fd2state[r].fd = r;
+		fd2state[r].rnode = it->second;	// actually the cmd e.g. `stty -echo raw;nc example.com 22`
+		fd2state[r].state = STATE_BCMD_ACCEPT;
+	}
+
 	if (config::socks5_fd != -1) {
 		pfds[config::socks5_fd].fd = config::socks5_fd;
 		pfds[config::socks5_fd].events = POLLIN;
@@ -239,9 +264,12 @@ int proxy_loop()
 
 	int max_fd = rl.rlim_cur - 1, script_fd = -1;
 
-	string ext_cmd = "", tbuf = "";
+	string ext_cmd = "", tbuf = "", bcmd = "";
 
 	enum { CHUNK_SIZE = 8192 };
+
+	long double bcmd_tx = 0, BCMD_PTY_SPEED_BYTES = BCMD_PTY_SPEED/8.0;
+	time_t bcmd_tx_start = 0;
 
 	for (;;) {
 
@@ -346,11 +374,41 @@ int proxy_loop()
 							continue;
 						}
 
+						// ext_cmd can have been filled by psc->read() only when already STARTTLS happened
 						if (ext_cmd.size() > 0) {
 							cmd_handler(ext_cmd, fd2state, pfds);
 						} else if (tbuf.size() > 0) {
 							fd2state[1].time = now;
-							fd2state[1].obuf += tbuf;
+
+							// Are we running in a bounce command session?
+							if (bcmd_accept_fd >= 0) {
+								//usleep(BCMD_PTY_DELAY);
+								fd2state[1].obuf += "\r\n< " + trim_bcmd_output(tbuf);
+
+								// do not echo back bcmd inject that happens just after STATE_BCMD_CONNECT
+								if (fd2state[bcmd_accept_fd].state == STATE_BCMD_CONNECT) {
+
+									// If we see the newline echoed back, strip off until newline and only forward real potential data.
+									// Otherwise the echo was just partial and we need to wait until full echo
+									string::size_type nl = string::npos;
+									if ((nl = tbuf.find("\n")) != string::npos) {
+										fd2state[bcmd_accept_fd].obuf += tbuf.substr(nl + 1);
+										fd2state[bcmd_accept_fd].state = STATE_BCMD_CONNECTED;
+										pfds[bcmd_accept_fd].events |= POLLIN;
+										if (!fd2state[bcmd_accept_fd].obuf.empty())
+											pfds[bcmd_accept_fd].events |= POLLOUT;
+									}
+								} else { // must be STATE_BCMD_CONNECTED, forward as is
+									fd2state[bcmd_accept_fd].obuf += tbuf;
+									pfds[bcmd_accept_fd].events |= POLLOUT;
+
+								}
+
+							// No -> only forward to stdout as is
+							} else {
+								fd2state[1].obuf += tbuf;
+							}
+
 							pfds[1].events |= POLLOUT;
 
 							// mirror to script sock if opened
@@ -384,6 +442,36 @@ int proxy_loop()
 
 					pfds[pt.master()].events |= POLLOUT;
 					fd2state[pt.master()].obuf += psc->possibly_b64encrypt("C:T:N:", fd2state[afd].rnode);	// trigger tcp_connect() on remote side
+
+				} else if (fd2state[i].state == STATE_BCMD_ACCEPT) {
+					if ((afd = accept(i, nullptr, nullptr)) < 0)
+						continue;
+
+					// can only handle one bcmd bounce at once
+					if (bcmd_accept_fd >= 0) {
+						close(afd);
+						continue;
+					}
+
+					pfds[afd].fd = afd;
+					pfds[afd].events = 0;	// dont accept data until bcmd has chance to connect
+
+					fd2state[afd].fd = afd;
+					fd2state[afd].rnode = fd2state[i].rnode;
+					fd2state[afd].state = STATE_BCMD_CONNECT;	// will change to STATE_BCMD_CONNECTED when reading echo back from PTY
+					fd2state[afd].time = now;
+					fd2state[afd].obuf.clear();
+
+					pfds[pt.master()].events |= POLLOUT;
+					fd2state[pt.master()].obuf += fd2state[i].rnode + "\n";	// trigger connect via command (e.g. `nc example.com 22`) on remote side
+
+					bcmd_accept_fd = afd;
+					bcmd = fd2state[i].rnode;
+					bcmd_tx = 0;
+					bcmd_tx_start = now;
+
+					fd2state[1].obuf += "\r\n> " + bcmd;
+					pfds[1].events |= POLLOUT;
 
 				} else if (fd2state[i].state == STATE_SOCKS5_ACCEPT) {
 					if ((afd = accept(i, nullptr, nullptr)) < 0)
@@ -426,6 +514,38 @@ int proxy_loop()
 					pfds[pt.master()].events |= POLLOUT;
 					fd2state[pt.master()].obuf += psc->possibly_b64encrypt("C:T:S:", fd2state[i].rnode + string(sbuf, r));
 					fd2state[i].time = now;
+
+				} else if (fd2state[i].state == STATE_BCMD_CONNECTED) {
+
+					// We need to throttle amount of data/sec so that remote
+					// peer do not need to send more than terminal speed (usually 38400bps)
+					// to the raw pty or otherwise data will get lost
+					if ((now - bcmd_tx_start) == 0 || (bcmd_tx / (now - bcmd_tx_start) > BCMD_PTY_SPEED_BYTES))
+						continue;
+
+					//usleep(BCMD_PTY_DELAY);
+					if ((r = recv(i, sbuf, sizeof(sbuf), 0)) <= 0) {
+						close(i);
+						pfds[i].fd = -1;
+						pfds[i].events = 0;
+						fd2state[i].state = STATE_INVALID;
+						fd2state[i].fd = -1;
+						fd2state[i].obuf.clear();
+
+						pfds[1].events |= POLLOUT;
+						fd2state[1].obuf += "\r\n> Bounce cmd finished, type Ctrl-C.\r\n";
+						bcmd = "";
+						bcmd_accept_fd = -1;
+						continue;
+					}
+					pfds[pt.master()].events |= POLLOUT;
+					fd2state[pt.master()].obuf += string(sbuf, r);
+					fd2state[i].time = now;
+
+					fd2state[1].obuf += "\r\n> " + trim_bcmd_output(string(sbuf, r));
+					pfds[1].events |= POLLOUT;
+
+					bcmd_tx += r;
 
 				} else if (fd2state[i].state == STATE_SOCKS4_AUTH) {
 
@@ -649,6 +769,21 @@ int proxy_loop()
 
 					fd2state[i].time = now;
 					fd2state[i].obuf.erase(0, r);
+				} else if (fd2state[i].state == STATE_BCMD_CONNECTED) {
+					if ((r = write(i, fd2state[i].obuf.c_str(), fd2state[i].obuf.size())) <= 0) {
+						close(i);
+						pfds[i].fd = -1;
+						pfds[i].events = 0;
+						fd2state[i].state = STATE_INVALID;
+						fd2state[i].fd = -1;
+						fd2state[i].obuf.clear();
+
+						pfds[pt.master()].events |= POLLOUT;
+						continue;
+					}
+
+					fd2state[i].time = now;
+					fd2state[i].obuf.erase(0, r);
 				} else if (fd2state[i].state == STATE_UDPSERVER) {
 					string &dgram = fd2state[i].odgrams.front().second;
 					string sin = udp_nodes2id.get(fd2state[i].odgrams.front().first); // map id back to originating sockaddr
@@ -728,9 +863,10 @@ int main(int argc, char **argv)
 
 	int c = -1;
 	char lport[16] = {0}, ip[128] = {0}, port_hex[16] = {0};
+	char bounce_cmd[128] = {0};
 	uint16_t rport = 0;
 
-	while ((c = getopt(argc, argv, "T:U:X:5:4:S:hN")) != -1) {
+	while ((c = getopt(argc, argv, "T:U:X:5:4:S:B:hN")) != -1) {
 		switch (c) {
 		case 'N':
 			config::socks5_dns = 1;
@@ -770,6 +906,12 @@ int main(int argc, char **argv)
 			if (config::script_sock == -1) {
 				if ((config::script_sock = unix_listen(optarg)) > 0)
 					printf("pscl: set up script socket on %s\n", optarg);;
+			}
+			break;
+		case 'B':
+			if (sscanf(optarg, "%15[0-9]:[%127[^]]]", lport, bounce_cmd) == 2) {
+				config::bcmd_tcp_listens[lport] = bounce_cmd;
+				printf("pscl: set up local TCP port %s to bounce via %s @ remote.\n", lport, bounce_cmd);
 			}
 			break;
 		case 'h':
