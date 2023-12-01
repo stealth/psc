@@ -36,17 +36,17 @@ namespace ns_psc {
 class pc_wrap {
 private:
 
-	int r_fd{-1}, w_fd{-1};
-	bool seen_starttls{0};
-	std::string err{""}, recent{""}, inq{""};
-	bool server_mode{0};
-	struct winsize ws;
-	bool wsize_signalled{0};
+	int d_r_fd{-1}, d_w_fd{-1};
+	bool d_seen_starttls{0};
+	std::string d_err{""}, d_recent{""}, d_inq{""};
+	bool d_server_mode{0};
+	struct winsize d_ws;
+	bool d_wsize_signalled{0};
 
 	termios d_saved_rfd_tattr;
-	AES_ctx r_ctx, w_ctx;
-	unsigned char w_key[64]{0}, r_key[64]{0};
-	unsigned char iv[32]{0};
+	AES_ctx d_r_ctx, d_w_ctx;
+	unsigned char d_w_key[64]{0}, d_r_key[64]{0};
+	unsigned char d_iv[32]{0};
 
 	std::string encrypt(const std::string &);
 
@@ -77,9 +77,9 @@ public:
 
 	int enable_crypto();
 
-	bool is_crypted() { return seen_starttls; }
+	bool is_crypted() { return d_seen_starttls; }
 
-	char *get_iv() { return reinterpret_cast<char *>(iv); }
+	char *get_iv() { return reinterpret_cast<char *>(d_iv); }
 };
 
 }
