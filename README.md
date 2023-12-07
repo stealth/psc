@@ -199,7 +199,7 @@ Next, following some examples to handle binary file xfer where *rfile* denotes t
 
 To start a session to drop remote files, locally:
 
-`TERM=dumb ./pscl -B '1234:[stty -echo raw;dd of=rfile.bin bs=1 count=7350]`
+`TERM=dumb ./pscl -B '1234:[stty -echo raw;dd of=rfile.bin bs=1 count=7350]'`
 
 Where you need to specify the amount of data that the remote side is expecting. It would also
 work without (e.g. `cat>...`) but then the session will hang after transmission has finished as
