@@ -54,7 +54,7 @@ bool exit_attr_set = 0;
 
 }
 
-const string banner = "\nPortShellCrypter [pscr] v0.67 (C) 2006-2023 stealth -- github.com/stealth/psc\n\n";
+const string banner = "\nPortShellCrypter [pscr] v0.68 (C) 2006-2023 stealth -- github.com/stealth/psc\n\n";
 
 
 // magic banner to start encryption. If changed here, also change in pcwrap.cc

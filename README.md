@@ -3,7 +3,8 @@ PortShellCrypter -- PSC
 
 This project - as well as its sister project [crash](https://github.com/stealth/crash) - belongs
 to my anti-censorship tool-set that allows to setup fully working encrypted shells and TCP/UDP
-forwarding in hostile censoring environments.
+forwarding in hostile censoring environments. It is also useful for forensics to dump data from
+devices via UART or adb when no other means are available.
 
 [![asciicast](https://asciinema.org/a/383043.svg)](https://asciinema.org/a/383043)
 *DNS lookup and SSH session forwarded across an UART connection to a Pi*
@@ -11,16 +12,16 @@ forwarding in hostile censoring environments.
 PSC allows to e2e encrypt shell sessions, single- or multip-hop, being
 agnostic of the underlying transport, as long as it is reliable and can send/receive
 Base64 encoded data without modding/filtering. Along with the e2e pty that
-you receive (for example inside a portshell), you can forward TCP and UDP
+you receive (for example inside a port-shell), you can forward TCP and UDP
 connections, similar to OpenSSH's `-L` parameter. This works transparently
 and without the need of an IP address assigned locally at the starting
-point. This allows forensicans and pentesters to create network connections
+point. This allows forensicans and pen-testers to create network connections
 for example via:
 
 * UART sessions to a device
 * `adb shell` sessions, if the OEM `adbd` doesn't support TCP forwarding
 * telnet sessions
-* modem dialups without ppp
+* modem dial-ups without ppp
 * other kinds of console logins
 * mixed SSH/telnet/modem sessions
 * ...
@@ -31,7 +32,7 @@ without the remote peer actually supporting ppp.
 It runs on *Linux, Android, OSX, Windows, FreeBSD, NetBSD* and (possibly) *OpenBSD*.
 
 PSC also includes *SOCKS4* and *SOCKS5* proxy support in order to have actual
-web browsing sessions via portshells or modem dialups remotely.
+web browsing sessions via port-shells or modem dial-ups remotely.
 
 Build
 -----
@@ -80,7 +81,7 @@ linux:~ >
 ```
 
 On the remote site (the last hop) with the shell session, no matter if its in
-a portshell, SSH, console login etc, you execute `pscr`:
+a port-shell, SSH, console login etc, you execute `pscr`:
 
 
 ```
@@ -112,7 +113,7 @@ datagram boundaries, while `socat` over `SSH -L` may break datagram boundaries
 and create malformed DNS requests.
 
 The session will be encrypted with `aes_256_ctr` of a PSK that you choose in the
-`Makefile`. This crypto scheme is mallable, but adding AAD or OAD data blows up
+`Makefile`. This crypto scheme is malleable, but adding AAD or OAD data blows up
 the packet size, where every byte counts since on interactive sessions and due to
 Base64 encoding, each typed character already causes much more data to be sent.
 
@@ -135,8 +136,8 @@ SOCKS4 and SOCKS5 support
 
 `pscl` also supports forwarding of TCP connections via *SOCKS4* (`-4 port`) and *SOCKS5*
 (`-5 port`). This sets up *port* as SOCKS port for TCP connections, so for instance you
-can browse remote networks from a portshell session without the need to open any other
-connection during a pentest. If you pass `-N` to `pscl`, it enables DNS name resolution
+can browse remote networks from a port-shell session without the need to open any other
+connection during a pen-test. If you pass `-N` to `pscl`, it enables DNS name resolution
 on the remote side, so you can also use chrome with it. But be warned: There is a privacy
 problem with browsers that try to resolve a sequence of DNS names upon startup that
 is not under your control. Also, if your remote side has a broken DNS setup, your typing
@@ -148,6 +149,85 @@ tries to minimize this potential problem with DNS lookup caches though, so in mo
 situation it should just work painlessly.
 If you pass `-X IP-address` (must be the first argument), you can bind your local proxy
 to an address different from `127.0.0.1`, so you can share the proxy in your local network.
+
+
+Bounce commands
+---------------
+
+*psc* contains features to allow TCP-connections or binary data blobs being forwarded from/to remote
+devices across multiple hops even if it is not possible to install the `pscr` binary at
+the remote site. This is very useful for forensic purposes if you do not have any means
+to otherwise download artefacts from the device (which can be an UART connected phone for example)
+or need to forward connections without touching the FS to not destroy evidence on the system
+or when the root-FS is ro mounted and you can't upload your tool-set.
+
+This solely works by local pty punkrock and handing over a bounce-command to `pscl` that it will
+drop on the remote shell (without `pscr` running) and some state engine magic that filters out
+and handles the data at the local side. Usually this requires to set the remote pty to raw mode
+at first before issuing the actual command.
+
+If you want to forward a TCP connection, this example requires `stty` and `nc` installed on the
+device, but it could theoretically be anything else that does equivalent.
+
+Start a local session:
+
+`TERM=dumb ./pscl -B '1234:[stty -echo raw;nc example.com 22]'`
+
+This will issue the command `stty -echo raw;nc example.com 22` to the remote device if you
+connect locally to port 1234 and then just forwards any data it sees back and forth and
+rate-limiting the traffic so it will not exceed the devices' tty speed (115200 is the compiled-in default).
+
+When the local session is started, connect to the remote device by UART, ssh or whatever it is and once
+you have the remote shell, also type locally:
+
+`ssh root@127.0.0.1 -p 1234` to bounce the SSH connection from your local box across the remote
+device to the `example.com` destination. Of course the `pscr` variant is preferred as it is only possible
+to bounce a single connection at a time (although you can pass multiple `-B` commands for various
+forwards) and theres a chance to hang the shell after the TCP session since the pty is in `raw -echo`
+mode and depending on whether the final remote peer also closes the connection, it might be
+that the shell just hangs after that. If you happen to find a pscl notification that the connection
+has finished and see a prompt, you should `reset` it, so that a new connection can be started.
+While data is being forwarded, you will see 7bit ASCII `<` and `>` notifications in `pscl` which are just
+local for easier debugging and progress detection.
+
+Note that the connection to the remote site has to be 8bit clean, i.e. the ssh, telnet, UART or whatever
+channel *must not handle escape sequences* (unlike when using `pscr`). For ssh connections this means you
+have to use `ssh -e none` in the `pscl` session.
+
+Next, following some examples to handle binary file xfer where *rfile* denotes the remote file and
+*lfile* the local file.
+
+To start a session to drop remote files, locally:
+
+`TERM=dumb ./pscl -B '1234:[stty -echo raw;dd of=rfile.bin bs=1 count=7350]`
+
+Where you need to specify the amount of data that the remote side is expecting. It would also
+work without (e.g. `cat>...`) but then the session will hang after transmission has finished as
+`cat` is endlessly expecting input.
+
+Then, ssh or whatever is necessary to get a shell on the remote device. Again, locally:
+
+`dd if=lfile.bin|nc 127.0.0.1 1234`
+
+which will connect to `pscl`'s local port 1234 and trigger the dump command on the remote side,
+forwarding the binary data of the local `lfile.bin` to remotes `rfile.bin`.
+
+Likewise, similar commands could be used to transfer binary data from a remote device to the
+local box for forensic purposes. Again, start of the session locally:
+
+`TERM=dumb ./pscl -B '1234:[stty -echo raw;dd if=rfile.bin]'` or
+
+`TERM=dumb ./pscl -B '1234:[stty -echo raw;cat rfile.bin]'`
+
+Then, ssh to remote device to get the shell, then again locally:
+
+`nc 127.0.0.1 1234|dd of=lfile.bin bs=1 count=7350`
+
+To obtain `rfile.bin` of size 7350 copied to local file `lfile.bin`
+
+If `stty -echo raw` is not available on the device, something like `python -c 'import tty;tty.setraw(0)'`
+also works. Note that on the remote device you need to have a tty (not just a port-shell) when using bounce
+commands, since the `stty` command to set raw mode requires a real tty.
 
 
 Scripting

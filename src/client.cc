@@ -1,7 +1,7 @@
 /*
  * This file is part of port shell crypter (psc).
  *
- * (C) 2006-2022 by Sebastian Krahmer,
+ * (C) 2006-2023 by Sebastian Krahmer,
  *                  sebastian [dot] krahmer [at] gmail [dot] com
  *
  * psc is free software: you can redistribute it and/or modify
@@ -328,9 +328,11 @@ int proxy_loop()
 					tcp_nodes2sock.erase(fd2state[i].rnode);
 				}
 
-				if (fd2state[i].state == STATE_SCRIPT_IO) {
+				if (fd2state[i].state == STATE_SCRIPT_IO ||
+				    fd2state[i].state == STATE_BCMD_CONNECT || fd2state[i].state == STATE_BCMD_CONNECTED) {
 					pfds[0].events |= POLLIN;		// reactivate stdin
-					pfds[config::script_sock].events |= POLLIN;
+					if (config::script_sock >= 0)
+						pfds[config::script_sock].events |= POLLIN;
 				}
 
 				close(i);
@@ -472,6 +474,7 @@ int proxy_loop()
 
 					fd2state[1].obuf += "\r\n> " + bcmd;
 					pfds[1].events |= POLLOUT;
+					pfds[0].events = 0;		// block stdin typing while bouncing
 
 				} else if (fd2state[i].state == STATE_SOCKS5_ACCEPT) {
 					if ((afd = accept(i, nullptr, nullptr)) < 0)
@@ -518,7 +521,7 @@ int proxy_loop()
 				} else if (fd2state[i].state == STATE_BCMD_CONNECTED) {
 
 					// We need to throttle amount of data/sec so that remote
-					// peer do not need to send more than terminal speed (usually 38400bps)
+					// peer do not need to send more than terminal speed (usually 115200baud)
 					// to the raw pty or otherwise data will get lost
 					if ((now - bcmd_tx_start) == 0 || (bcmd_tx / (now - bcmd_tx_start) > BCMD_PTY_SPEED_BYTES))
 						continue;
@@ -532,8 +535,9 @@ int proxy_loop()
 						fd2state[i].fd = -1;
 						fd2state[i].obuf.clear();
 
+						pfds[0].events |= POLLIN;	// reactivate stdin
 						pfds[1].events |= POLLOUT;
-						fd2state[1].obuf += "\r\n> Bounce cmd finished, type Ctrl-C.\r\n";
+						fd2state[1].obuf += "\r\n> Bounce cmd finished, type `reset`.\r\n";
 						bcmd = "";
 						bcmd_accept_fd = -1;
 						continue;
@@ -779,6 +783,7 @@ int proxy_loop()
 						fd2state[i].obuf.clear();
 
 						pfds[pt.master()].events |= POLLOUT;
+						pfds[0].events |= POLLIN;	// reactivate stdin
 						continue;
 					}
 
@@ -829,7 +834,7 @@ int proxy_loop()
 
 int main(int argc, char **argv)
 {
-	printf("\nPortShellCrypter [pscl] v0.67 (C) 2006-2023 stealth -- github.com/stealth/psc\n\n");
+	printf("\nPortShellCrypter [pscl] v0.68 (C) 2006-2023 stealth -- github.com/stealth/psc\n\n");
 
 	if (!getenv("SHELL")) {
 		printf("pscl: No $SHELL set in environment. Exiting.\n");
@@ -911,7 +916,7 @@ int main(int argc, char **argv)
 		case 'B':
 			if (sscanf(optarg, "%15[0-9]:[%127[^]]]", lport, bounce_cmd) == 2) {
 				config::bcmd_tcp_listens[lport] = bounce_cmd;
-				printf("pscl: set up local TCP port %s to bounce via %s @ remote.\n", lport, bounce_cmd);
+				printf("pscl: set up local TCP port %s to bounce via `%s` @ remote.\n", lport, bounce_cmd);
 			}
 			break;
 		case 'h':

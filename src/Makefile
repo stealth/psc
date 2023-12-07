@@ -26,6 +26,8 @@ else ifeq ($(shell uname), OpenBSD)
 
 else ifeq ($(shell uname), Solaris)
 
+else ifeq ($(shell uname), Darwin)
+
 # Cygwin
 else
 DEFS+=$(POSIX)
