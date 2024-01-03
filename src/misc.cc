@@ -46,6 +46,8 @@ bool socks5_dns = 0;
 
 string local_proxy_ip = "127.0.0.1";
 
+size_t rate_limit_bytes = 0;	// default off
+
 }
 
 namespace ns_psc {
@@ -58,6 +60,27 @@ void die(const char *s)
 	fprintf(stderr, "[%d] %s: %s\n", getpid(), s, strerror(errno));
 	tcsetattr(0, TCSANOW, &exit_tattr);
 	exit(errno);
+}
+
+
+int config_set_baud_limit(const string &bauds)
+{
+	if (bauds == "576000")
+		config::rate_limit_bytes = 576000/8;
+	else if (bauds == "230400")
+		config::rate_limit_bytes = 230400/8;
+	else if (bauds == "115200")
+		config::rate_limit_bytes = 115200/8;
+	else if (bauds == "57600")
+		config::rate_limit_bytes = 57600/8;
+	else if (bauds == "38400")
+		config::rate_limit_bytes = 38400/8;
+	else if (bauds == "9600")
+		config::rate_limit_bytes = 9600/8;
+	else
+		return -1;
+
+	return 0;
 }
 
 

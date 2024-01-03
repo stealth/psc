@@ -57,7 +57,7 @@ void sig_chld(int)
 {
 	tcsetattr(0, TCSANOW, &exit_tattr);
 	printf("pscl: exiting\n");
-	exit(0);
+	_exit(0);
 }
 
 
@@ -73,6 +73,16 @@ void sig_usr1(int)
 }
 
 
+void sig_usr2(int)
+{
+	if (!psc)
+		return;
+
+	printf("\r\npscl: Disabling encryption on USR2\r\n");
+	psc->reset();
+}
+
+
 bool winsize_changed = 0;
 
 void sig_win(int)
@@ -84,8 +94,8 @@ void sig_win(int)
 void usage(const char *argv0)
 {
 	printf("Usage: %s\t[-4 socks4 lport] [-5 socks5 lport] [-T lport:[ip]:rport]\n"
-	       "\t\t[-U lport:[ip]:rport] [-X local proxy IP (127.0.0.1 dflt)]\n"
-	       "\t\t[-B lport:[bounce cmd] [-S scripting socket] [-N]\n\n", argv0);
+	       "\t\t[-U lport:[ip]:rport] [-X local proxy IP (127.0.0.1 dflt)] [-N]\n"
+	       "\t\t[-B lport:[bounce cmd] [-S script socket] [-l baud limit]\n\n", argv0);
 }
 
 
@@ -268,8 +278,8 @@ int proxy_loop()
 
 	enum { CHUNK_SIZE = 8192 };
 
-	long double bcmd_tx = 0, BCMD_PTY_SPEED_BYTES = BCMD_PTY_SPEED/8.0;
-	time_t bcmd_tx_start = 0;
+	timeval last_tx_tv;
+	memset(&last_tx_tv, 0, sizeof(last_tx_tv));
 
 	for (;;) {
 
@@ -333,6 +343,8 @@ int proxy_loop()
 					pfds[0].events |= POLLIN;		// reactivate stdin
 					if (config::script_sock >= 0)
 						pfds[config::script_sock].events |= POLLIN;
+					if (i == bcmd_accept_fd)
+						bcmd_accept_fd = -1;
 				}
 
 				close(i);
@@ -380,12 +392,9 @@ int proxy_loop()
 						if (ext_cmd.size() > 0) {
 							cmd_handler(ext_cmd, fd2state, pfds);
 						} else if (tbuf.size() > 0) {
-							fd2state[1].time = now;
 
 							// Are we running in a bounce command session?
 							if (bcmd_accept_fd >= 0) {
-								//usleep(BCMD_PTY_DELAY);
-								fd2state[1].obuf += "\r\n< " + trim_bcmd_output(tbuf);
 
 								// do not echo back bcmd inject that happens just after STATE_BCMD_CONNECT
 								if (fd2state[bcmd_accept_fd].state == STATE_BCMD_CONNECT) {
@@ -401,17 +410,17 @@ int proxy_loop()
 											pfds[bcmd_accept_fd].events |= POLLOUT;
 									}
 								} else { // must be STATE_BCMD_CONNECTED, forward as is
+									fd2state[1].obuf += "\r\n< " + trim_bcmd_output(tbuf);
+									pfds[1].events |= POLLOUT;
 									fd2state[bcmd_accept_fd].obuf += tbuf;
 									pfds[bcmd_accept_fd].events |= POLLOUT;
-
 								}
 
 							// No -> only forward to stdout as is
 							} else {
 								fd2state[1].obuf += tbuf;
+								pfds[1].events |= POLLOUT;
 							}
-
-							pfds[1].events |= POLLOUT;
 
 							// mirror to script sock if opened
 							if (script_fd >= 0) {
@@ -425,6 +434,8 @@ int proxy_loop()
 				} else if (fd2state[i].state == STATE_ACCEPT) {
 					if ((afd = accept(i, nullptr, nullptr)) < 0)
 						continue;
+
+					maybe_set_rcvbuf(afd, config::rate_limit_bytes);
 
 					// append ID part of host/port/id/ header. We use the accepted sock fd
 					// as ID, as this is unique and identifies the TCP connection
@@ -455,6 +466,8 @@ int proxy_loop()
 						continue;
 					}
 
+					maybe_set_rcvbuf(afd, config::rate_limit_bytes);
+
 					pfds[afd].fd = afd;
 					pfds[afd].events = 0;	// dont accept data until bcmd has chance to connect
 
@@ -469,21 +482,21 @@ int proxy_loop()
 
 					bcmd_accept_fd = afd;
 					bcmd = fd2state[i].rnode;
-					bcmd_tx = 0;
-					bcmd_tx_start = now;
 
 					fd2state[1].obuf += "\r\n> " + bcmd;
 					pfds[1].events |= POLLOUT;
-					pfds[0].events = 0;		// block stdin typing while bouncing
+					pfds[0].events = 0;			// block stdin typing while bouncing
 
 				} else if (fd2state[i].state == STATE_SOCKS5_ACCEPT) {
 					if ((afd = accept(i, nullptr, nullptr)) < 0)
 						continue;
 
+					maybe_set_rcvbuf(afd, config::rate_limit_bytes);
+
 					pfds[afd].fd = afd;
 					pfds[afd].events = POLLIN;		// wait for SOCKS5 proto requests
 					fd2state[afd].fd = afd;
-					fd2state[afd].rnode = "";
+					fd2state[afd].rnode = "";		// filled in by later state
 					fd2state[afd].state = STATE_SOCKS5_AUTH1;
 					fd2state[afd].time = now;
 					fd2state[afd].obuf.clear();
@@ -492,15 +505,19 @@ int proxy_loop()
 					if ((afd = accept(i, nullptr, nullptr)) < 0)
 						continue;
 
+					maybe_set_rcvbuf(afd, config::rate_limit_bytes);
+
 					pfds[afd].fd = afd;
 					pfds[afd].events = POLLIN;		// wait for SOCKS4 proto requests
 					fd2state[afd].fd = afd;
-					fd2state[afd].rnode = "";
+					fd2state[afd].rnode = "";		// filled in by later state
 					fd2state[afd].state = STATE_SOCKS4_AUTH;
 					fd2state[afd].time = now;
 					fd2state[afd].obuf.clear();
 
 				} else if (fd2state[i].state == STATE_CONNECTED) {
+					if (config::rate_limit_bytes && fd2state[pt.master()].obuf.size() > MAX_RX_ON_LIMITS)
+						continue;
 					if ((r = recv(i, sbuf, sizeof(sbuf), 0)) <= 0) {
 						close(i);
 						pfds[i].fd = -1;
@@ -519,14 +536,8 @@ int proxy_loop()
 					fd2state[i].time = now;
 
 				} else if (fd2state[i].state == STATE_BCMD_CONNECTED) {
-
-					// We need to throttle amount of data/sec so that remote
-					// peer do not need to send more than terminal speed (usually 115200baud)
-					// to the raw pty or otherwise data will get lost
-					if ((now - bcmd_tx_start) == 0 || (bcmd_tx / (now - bcmd_tx_start) > BCMD_PTY_SPEED_BYTES))
+					if (config::rate_limit_bytes && fd2state[pt.master()].obuf.size() > MAX_RX_ON_LIMITS)
 						continue;
-
-					//usleep(BCMD_PTY_DELAY);
 					if ((r = recv(i, sbuf, sizeof(sbuf), 0)) <= 0) {
 						close(i);
 						pfds[i].fd = -1;
@@ -545,11 +556,6 @@ int proxy_loop()
 					pfds[pt.master()].events |= POLLOUT;
 					fd2state[pt.master()].obuf += string(sbuf, r);
 					fd2state[i].time = now;
-
-					fd2state[1].obuf += "\r\n> " + trim_bcmd_output(string(sbuf, r));
-					pfds[1].events |= POLLOUT;
-
-					bcmd_tx += r;
 
 				} else if (fd2state[i].state == STATE_SOCKS4_AUTH) {
 
@@ -732,9 +738,9 @@ int proxy_loop()
 
 			} else if (pfds[i].revents & POLLOUT) {
 				pfds[i].revents = 0;
-				if (fd2state[i].state == STATE_STDOUT) {
+				size_t n = fd2state[i].obuf.size() > CHUNK_SIZE ? CHUNK_SIZE : fd2state[i].obuf.size();
 
-					size_t n = fd2state[i].obuf.size() > CHUNK_SIZE ? CHUNK_SIZE : fd2state[i].obuf.size();
+				if (fd2state[i].state == STATE_STDOUT) {
 
 					if ((r = write(1, fd2state[i].obuf.c_str(), n)) <= 0) {
 						if (errno == EINTR)
@@ -745,11 +751,48 @@ int proxy_loop()
 
 					fd2state[i].obuf.erase(0, r);
 				} else if (fd2state[i].state == STATE_PTY) {
-					if ((r = write(psc->w_fileno(), fd2state[i].obuf.c_str(), fd2state[i].obuf.size())) <= 0) {
+
+					// We need to throttle amount of data/usec in cases where bounce command was
+					// given since remote pty is in raw mode w/o flow control or we run across a serial
+					// line that has a baud rate set
+					if (config::rate_limit_bytes) {
+						if (n > 128)
+							n = 128;
+						timeval now_tv;
+						gettimeofday(&now_tv, nullptr);
+
+						time_t sec_diff = now_tv.tv_sec - last_tx_tv.tv_sec;
+
+						// If time was alredy taken and last write to pty was <=1 s ago
+						if (last_tx_tv.tv_sec && sec_diff <= 1) {
+							suseconds_t usec_diff = now_tv.tv_usec - last_tx_tv.tv_usec;
+							if (!usec_diff)
+								usec_diff = 1;
+
+							// what we want to write is fitting into rate-limit with accuracy of usec (factor 1000.000)?
+							if ((n+1)*1000000 / (sec_diff*1000000 + usec_diff) >= config::rate_limit_bytes) {
+								continue;
+							}
+						}
+
+						// It fits into limit, go ahead with writing.
+					}
+
+					if ((r = write(psc->w_fileno(), fd2state[i].obuf.c_str(), n)) <= 0) {
 						if (errno == EAGAIN || errno == EWOULDBLOCK)
 							continue;
 						else
 							die(psc->why());
+					}
+
+					if (config::rate_limit_bytes) {
+						gettimeofday(&last_tx_tv, nullptr);
+
+						// If we are bouncing binary data to a remote cmd, make some nice local progress output.
+						if (bcmd_accept_fd >= 0 && fd2state[bcmd_accept_fd].state == STATE_BCMD_CONNECTED) {
+							fd2state[1].obuf += "\r\n> " + trim_bcmd_output(fd2state[i].obuf.substr(0, r < 75 ? r : 75));
+							pfds[1].events |= POLLOUT;
+						}
 					}
 
 					fd2state[i].time = now;
@@ -757,7 +800,7 @@ int proxy_loop()
 				} else if (fd2state[i].state == STATE_CONNECT ||	// for the SOCKS4/5 case: reply with conn success
 					   fd2state[i].state == STATE_SOCKS5_AUTH2 ||	// for the SOCKS5 case: reply for auth success
 				           fd2state[i].state == STATE_CONNECTED) {
-					if ((r = write(i, fd2state[i].obuf.c_str(), fd2state[i].obuf.size())) <= 0) {
+					if ((r = write(i, fd2state[i].obuf.c_str(), n)) <= 0) {
 						close(i);
 						pfds[i].fd = -1;
 						pfds[i].events = 0;
@@ -774,7 +817,7 @@ int proxy_loop()
 					fd2state[i].time = now;
 					fd2state[i].obuf.erase(0, r);
 				} else if (fd2state[i].state == STATE_BCMD_CONNECTED) {
-					if ((r = write(i, fd2state[i].obuf.c_str(), fd2state[i].obuf.size())) <= 0) {
+					if ((r = write(i, fd2state[i].obuf.c_str(), n)) <= 0) {
 						close(i);
 						pfds[i].fd = -1;
 						pfds[i].events = 0;
@@ -799,8 +842,6 @@ int proxy_loop()
 					fd2state[i].time = now;
 
 				} else if (fd2state[i].state == STATE_SCRIPT_IO) {
-
-					size_t n = fd2state[i].obuf.size() > CHUNK_SIZE ? CHUNK_SIZE : fd2state[i].obuf.size();
 
 					if ((r = write(i, fd2state[i].obuf.c_str(), n)) <= 0) {
 						if (errno == EINTR)
@@ -856,6 +897,12 @@ int main(int argc, char **argv)
 		die("pscl: sigaction");
 
 	memset(&sa, 0, sizeof(sa));
+	sa.sa_flags = SA_RESTART;
+	sa.sa_handler = sig_usr2;
+	if (sigaction(SIGUSR2, &sa, nullptr) < 0)
+		die("pscl: sigaction");
+
+	memset(&sa, 0, sizeof(sa));
 	sa.sa_handler = sig_win;
 	sa.sa_flags = SA_RESTART;
 	if (sigaction(SIGWINCH, &sa, nullptr) < 0)
@@ -870,8 +917,9 @@ int main(int argc, char **argv)
 	char lport[16] = {0}, ip[128] = {0}, port_hex[16] = {0};
 	char bounce_cmd[128] = {0};
 	uint16_t rport = 0;
+	string bauds = "";
 
-	while ((c = getopt(argc, argv, "T:U:X:5:4:S:B:hN")) != -1) {
+	while ((c = getopt(argc, argv, "T:U:X:5:4:S:B:l:hN")) != -1) {
 		switch (c) {
 		case 'N':
 			config::socks5_dns = 1;
@@ -919,12 +967,20 @@ int main(int argc, char **argv)
 				printf("pscl: set up local TCP port %s to bounce via `%s` @ remote.\n", lport, bounce_cmd);
 			}
 			break;
+		case 'l':
+			if (config_set_baud_limit(optarg) < 0)
+				printf("pscl: Invalid baud rate. Must be one of 576000, 230400, 115200, 57600, 38400 or 9600\n");
+			break;
 		case 'h':
 		default:
 			usage(argv[0]);
 			exit(0);
 		}
 	}
+
+	// If using bounce cmds, set a default baud rate if none was given
+	if (config::bcmd_tcp_listens.size() > 0 && !config::rate_limit_bytes)
+		config::rate_limit_bytes = 115200/8;
 
 	printf("\npscl: Waiting for [pscr] session to appear ...\n");
 

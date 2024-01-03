@@ -43,6 +43,8 @@ int udp_listen(const std::string &, const std::string &);
 
 int unix_listen(const std::string &);
 
+int maybe_set_rcvbuf(int, size_t);
+
 int cmd_handler(const std::string &, state *, pollfd *, uint32_t flags = 0);
 
 

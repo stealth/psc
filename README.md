@@ -175,7 +175,7 @@ Start a local session:
 
 This will issue the command `stty -echo raw;nc example.com 22` to the remote device if you
 connect locally to port 1234 and then just forwards any data it sees back and forth and
-rate-limiting the traffic so it will not exceed the devices' tty speed (115200 is the compiled-in default).
+rate-limiting the traffic so it will not exceed the devices' tty speed (115200 is the default).
 
 When the local session is started, connect to the remote device by UART, ssh or whatever it is and once
 you have the remote shell, also type locally:
@@ -210,7 +210,11 @@ Then, ssh or whatever is necessary to get a shell on the remote device. Again, l
 `dd if=lfile.bin|nc 127.0.0.1 1234`
 
 which will connect to `pscl`'s local port 1234 and trigger the dump command on the remote side,
-forwarding the binary data of the local `lfile.bin` to remotes `rfile.bin`.
+forwarding the binary data of the local `lfile.bin` to remotes `rfile.bin`. Due to rate-limiting
+this can take a while and you *only trust your psc progress screen* whether the transfer is finished.
+The local `dd ...|nc ...` command will only show you the local status which can eat entire files
+in msecs due to local TCP buffers while the file is still being transfered through the pty.
+So make sure you only press `Ctrl-C` when the *psc* screen tells you it is finished.
 
 Likewise, similar commands could be used to transfer binary data from a remote device to the
 local box for forensic purposes. Again, start of the session locally:
@@ -229,6 +233,40 @@ If `stty -echo raw` is not available on the device, something like `python -c 'i
 also works. Note that on the remote device you need to have a tty (not just a port-shell) when using bounce
 commands, since the `stty` command to set raw mode requires a real tty.
 
+If doing all the tests only locally w/o any connection between `pscl` and the command that you bounce,
+you need to add `TERM=dumb` before the `pscl ...` comands. It can be omitted if running across a connection.
+
+
+Flow control
+------------
+
+If *psc* runs across a serial connection, it is very likely that flow control is disabled and sending data
+too fast would just make it vanish and corrupt the session. In this case you have to invoke *both ends* with
+the `-l` parameter to set a baud rate (e.g. `-l 115200`). If bounce commands are used the same problem exists
+with the pty in raw mode and rate limiting is automatically enabled to `115200` but a higher value
+can be set if desired.
+Note that browsing animated web sites is pure PITA with rate limiting from the 90's even though *psc*
+does its best to still allow typing the shell during the connection. SSH connections OTOH work surprisingly
+good.
+
+UART / modem line
+-----------------
+
+Some UART chipsets seem to have different RX vs TX speeds. So even though you have a 115200 baud
+UART connection set up, the local (upload) part is even more limited or otherwise data bits are lost.
+During my raspi tests, I had to use `pscl -l 57600 ...` on the local side while using `pscr -l 115200 ...`
+on the device. For bounce-commands I also had to use the 57600 even if the connection was at 115200.
+If possible also use soft flow control with your serial console program. Also check the `contrib`
+folder in order to patch your console program to be escape-character safe.
+
+
+SIGUSR1 / SIGUSR2
+-----------------
+
+You can send `SIGUSR1` to `pscl` so it tells you whether the session is encrypted. If the remote
+`pscr` dies or exits without possibility to signal that to the local part, `pscl` will stay
+in encryption mode and therefore hang. In this case you can force a reset to plaintext mode
+by sending `SIGUSR2`, so a new session can be started.
 
 Scripting
 ---------

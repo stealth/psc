@@ -174,6 +174,11 @@ int proxy_loop()
 	bool breakout = 0;
 	string ext_cmd = "", tbuf = "";
 
+	enum { CHUNK_SIZE = 8192 };
+
+	timeval last_tx_tv;
+	memset(&last_tx_tv, 0, sizeof(last_tx_tv));
+
 	do {
 		memset(sbuf, 0, sizeof(sbuf));
 
@@ -264,6 +269,8 @@ int proxy_loop()
 					} while (r == 1);
 
 				} else if (fd2state[i].state == STATE_CONNECTED) {
+					if (config::rate_limit_bytes && fd2state[1].obuf.size() > MAX_RX_ON_LIMITS)
+						continue;
 					if ((r = recv(i, sbuf, sizeof(sbuf), 0)) <= 0) {
 						close(i);
 						pfds[i].fd = -1;
@@ -289,18 +296,51 @@ int proxy_loop()
 				}
 			} else if (pfds[i].revents & POLLOUT) {
 				pfds[i].revents = 0;
+				size_t n = fd2state[i].obuf.size() > CHUNK_SIZE ? CHUNK_SIZE : fd2state[i].obuf.size();
+
 				if (fd2state[i].state == STATE_PTY) {
-					if ((r = write(pt.master(), fd2state[i].obuf.c_str(), fd2state[i].obuf.size())) <= 0) {
+					if ((r = write(pt.master(), fd2state[i].obuf.c_str(), n)) <= 0) {
 						breakout = 1;
 						break;
 					}
 
 					fd2state[i].obuf.erase(0, r);
 				} else if (fd2state[i].state == STATE_STDOUT) {
-					if ((r = write(psc.w_fileno(), fd2state[i].obuf.c_str(), fd2state[i].obuf.size())) <= 0) {
+
+					// We need to throttle amount of data/usec in cases where bounce command was
+					// given since remote pty is in raw mode w/o flow control or we run across a serial
+					// line that has a baud rate set
+					if (config::rate_limit_bytes) {
+
+						if (n > 128)
+							n = 128;
+						timeval now_tv;
+						gettimeofday(&now_tv, nullptr);
+
+						time_t sec_diff = now_tv.tv_sec - last_tx_tv.tv_sec;
+
+						// If time was alredy taken and last write to pty was <=1 s ago
+						if (last_tx_tv.tv_sec && sec_diff <= 1) {
+							suseconds_t usec_diff = now_tv.tv_usec - last_tx_tv.tv_usec;
+							if (!usec_diff)
+								usec_diff = 1;
+
+							// what we want to write is fitting into rate-limit with accuracy of usec (factor 1000.000)?
+							if ((n+1)*1000000 / (sec_diff*1000000 + usec_diff) >= config::rate_limit_bytes) {
+								continue;
+							}
+						}
+
+						// It fits into limit, go ahead with writing.
+					}
+
+					if ((r = write(psc.w_fileno(), fd2state[i].obuf.c_str(), n)) <= 0) {
 						breakout = 1;
 						break;
 					}
+
+					if (config::rate_limit_bytes)
+						gettimeofday(&last_tx_tv, nullptr);
 
 					fd2state[i].obuf.erase(0, r);
 				} else if (fd2state[i].state == STATE_CONNECT) {
@@ -320,6 +360,8 @@ int proxy_loop()
 						continue;
 					}
 
+					maybe_set_rcvbuf(i, config::rate_limit_bytes);
+
 					pfds[i].events = POLLIN;
 					fd2state[i].state = STATE_CONNECTED;
 					fd2state[i].time = now;
@@ -328,7 +370,7 @@ int proxy_loop()
 					fd2state[1].obuf += psc.possibly_b64encrypt("C:T:C:", fd2state[i].rnode);	// TCP connect() finished, connection is set up
 
 				} else if (fd2state[i].state == STATE_CONNECTED) {
-					if ((r = send(i, fd2state[i].obuf.c_str(), fd2state[i].obuf.size(), 0)) <= 0) {
+					if ((r = send(i, fd2state[i].obuf.c_str(), n, 0)) <= 0) {
 						close(i);
 						pfds[i].fd = -1;
 						pfds[i].events = 0;
@@ -463,7 +505,7 @@ int b64_decode_file()
 
 void usage(const char *argv0)
 {
-	printf("%sUsage: %s [-E file] [-D] [-N]\n", banner.c_str(), argv0);
+	printf("%sUsage: %s [-E file] [-D] [-N] [-l baud limit]\n", banner.c_str(), argv0);
 }
 
 
@@ -475,8 +517,9 @@ int main(int argc, char **argv)
 
 	int c = 0;
 	bool no_nagle = 0, b64_encoded = 0;
+	string bauds = "";
 
-	while ((c = getopt(argc, argv, "E:DNh")) != -1) {
+	while ((c = getopt(argc, argv, "E:l:DNh")) != -1) {
 
 		switch (c) {
 		case 'N':
@@ -489,6 +532,10 @@ int main(int argc, char **argv)
 		case 'D':
 			b64_decode_file();
 			exit(0);
+			break;
+		case 'l':
+			if (config_set_baud_limit(optarg) < 0)
+				printf("pscr: Invalid baud rate. Must be one of 576000, 230400, 115200, 57600, 38400 or 9600\n");
 			break;
 		case 'h':
 		default:

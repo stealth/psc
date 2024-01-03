@@ -33,6 +33,8 @@ namespace ns_psc {
 
 void die(const char *);
 
+int config_set_baud_limit(const std::string &);
+
 void fix_size(int);
 
 int writen(int, const char *, size_t);
@@ -75,9 +77,7 @@ enum {
 
 	NETCMD_SEND_ALLOW	=	1,
 
-	BCMD_PTY_SPEED		=	115200,
-	//BCMD_PTY_SPEED		=	38400,
-
+	MAX_RX_ON_LIMITS	=	8192,
 	MAX_NAME_LEN		=	39,
 	FDID_MAX		=	65535	// id field of net cmds encoded as %04hx, so socket fds must not be larger
 };
@@ -103,6 +103,8 @@ extern int socks5_port, socks5_fd, socks4_port, socks4_fd, script_sock;
 extern bool socks5_dns;
 
 extern std::string local_proxy_ip;
+
+extern size_t rate_limit_bytes;
 
 }
 

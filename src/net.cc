@@ -208,6 +208,28 @@ static int tcp_connect(const string &ip, const string &port)
 }
 
 
+int maybe_set_rcvbuf(int sock, size_t limit_bytes)
+{
+	// lower TCP rcv buffer size if we don't have large bandwidth to
+	// remote peer anyways
+	if (limit_bytes) {
+		size_t rmem = limit_bytes/10;
+		socklen_t rmem_len = sizeof(rmem);
+		if (rmem > 8192)
+			rmem = 8192;
+		if (rmem < 4096)
+			rmem = 4096;
+#ifdef SOL_TCP
+		if (setsockopt(sock, SOL_TCP, SO_RCVBUF, &rmem, rmem_len) < 0)
+#else
+		if (setsockopt(sock, IPPROTO_TCP, SO_RCVBUF, &rmem, rmem_len) < 0)
+#endif
+			return -1;
+	}
+	return 0;
+}
+
+
 /*
  * C:T:N:IP/port/ID/		-> open new TCP connection to IP:port
  * C:T:C:IP/port/ID/	  	-> connection to IP:port is estabished on remote side

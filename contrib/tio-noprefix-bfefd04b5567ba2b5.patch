@@ -1,0 +1,71 @@
+diff --git a/src/configfile.c b/src/configfile.c
+index 387063b..a96e0c3 100644
+--- a/src/configfile.c
++++ b/src/configfile.c
+@@ -259,7 +259,10 @@ static int data_handler(void *user, const char *section, const char *name,
+         }
+         else if (!strcmp(name, "prefix-ctrl-key"))
+         {
+-            if (ctrl_key_code(value[0]) > 0)
++	    if (!strcmp(value, "none")) {
++	        option.prefix_off = 1;
++	    }
++            else if (ctrl_key_code(value[0]) > 0)
+             {
+                 option.prefix_code = ctrl_key_code(value[0]);
+                 option.prefix_key = value[0];
+diff --git a/src/options.c b/src/options.c
+index 4f08e6d..1f88bbb 100644
+--- a/src/options.c
++++ b/src/options.c
+@@ -86,6 +86,7 @@ struct option_t option =
+     .hex_mode = false,
+     .prefix_code = 20, // ctrl-t
+     .prefix_key = 't',
++    .prefix_off = 0,
+     .response_wait = false,
+     .response_timeout = 100,
+     .mute = false,
+diff --git a/src/options.h b/src/options.h
+index b18d8ff..64f8b96 100644
+--- a/src/options.h
++++ b/src/options.h
+@@ -59,6 +59,7 @@ struct option_t
+     bool hex_mode;
+     unsigned char prefix_code;
+     unsigned char prefix_key;
++    unsigned char prefix_off;
+     bool response_wait;
+     int response_timeout;
+     bool mute;
+diff --git a/src/tty.c b/src/tty.c
+index cdab4b9..19cfda0 100644
+--- a/src/tty.c
++++ b/src/tty.c
+@@ -338,7 +338,7 @@ void *tty_stdin_input_thread(void *arg)
+ 
+                 input_char = input_buffer[i];
+ 
+-                if (previous_char == option.prefix_code)
++                if (!option.prefix_off && previous_char == option.prefix_code)
+                 {
+                     if (input_char == option.prefix_code)
+                     {
+@@ -568,7 +568,7 @@ void handle_command_sequence(char input_char, char *output_char, bool *forward)
+     }
+ 
+     /* Handle escape key commands */
+-    if (previous_char == option.prefix_code)
++    if (!option.prefix_off && previous_char == option.prefix_code)
+     {
+         /* Do not forward input char to output by default */
+         *forward = false;
+@@ -1535,7 +1535,7 @@ int tty_connect(void)
+                     if (interactive_mode)
+                     {
+                         /* Do not forward prefix key */
+-                        if (input_char == option.prefix_code)
++                        if (!option.prefix_off && input_char == option.prefix_code)
+                         {
+                             forward = false;
+                         }
