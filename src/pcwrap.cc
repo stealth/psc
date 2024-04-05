@@ -49,6 +49,8 @@ const string PSC_STARTTLS = START_BANNER;
 pc_wrap::pc_wrap(int rfd, int wfd)
 	: d_r_fd(rfd), d_w_fd(wfd)
 {
+	d_inq.reserve(16*BLOCK_SIZE);
+	d_recent.reserve(4096);
 }
 
 
@@ -154,18 +156,14 @@ int pc_wrap::check_wsize(int fd)
 string pc_wrap::decrypt(const string &buf)
 {
 	string result = "";
-	if (buf.size() <= 0)
+	if (buf.size() <= 0 || buf.size() > 2*BLOCK_SIZE)
 		return result;
 
-	char *obuf = new (nothrow) char[buf.size()];
-	if (!obuf)
-		return result;
+	char obuf[2*BLOCK_SIZE] = {0};
 
 	AES_CTR_xcrypt(&d_r_ctx, reinterpret_cast<const uint8_t *>(buf.c_str()), buf.size(), reinterpret_cast<uint8_t *>(obuf));
 
 	result.assign(obuf, buf.size());
-	delete [] obuf;
-
 	return result;
 }
 
@@ -173,18 +171,14 @@ string pc_wrap::decrypt(const string &buf)
 string pc_wrap::encrypt(const string &buf)
 {
 	string result = "";
-	if (buf.size() <= 0)
+	if (buf.size() <= 0 || buf.size() > 2*BLOCK_SIZE)
 		return result;
 
-	char *obuf = new (nothrow) char[buf.size()];
-	if (!obuf)
-		return result;
+	char obuf[2*BLOCK_SIZE] = {0};
 
 	AES_CTR_xcrypt(&d_w_ctx, reinterpret_cast<const uint8_t *>(buf.c_str()), buf.size(), reinterpret_cast<uint8_t *>(obuf));
 
 	result.assign(obuf, buf.size());
-	delete [] obuf;
-
 	return result;
 }
 
@@ -192,7 +186,7 @@ string pc_wrap::encrypt(const string &buf)
 int pc_wrap::read(bool nosys, string &buf, string &ext_cmd, int &starttls)
 {
 	ssize_t r;
-	char tbuf[2*BLOCK_SIZE] = {0};
+	char tbuf[2*BLOCK_SIZE] = {0};	// do not change buf-size w/o reflecting ::encrypt() and ::decrypt() limits
 	string inbuf = "";
 
 	buf.clear();
@@ -224,13 +218,13 @@ int pc_wrap::read(bool nosys, string &buf, string &ext_cmd, int &starttls)
 		}
 
 		// silently ignore too large chunks
-		if (idx2 - idx1 > BLOCK_SIZE) {
+		if (idx2 - idx1 > BLOCK_SIZE || idx2 < idx1) {
 			d_inq.clear();
 			return 0;
 		}
 
 		// when here, we have a valid b64 encoded crypted string. b64 decode will automatically
-		// stop at closing ) since its an invalid B64 char
+		// stop at closing `)` since its an invalid B64 char and so the target bufsize is large enough
 		r = b64_decode(d_inq.c_str() + idx1 + 1, reinterpret_cast<unsigned char *>(tbuf));
 		string s = decrypt(string(tbuf, r));
 
@@ -353,7 +347,6 @@ string pc_wrap::wsize_cmd()
 	char wsbuf[64] = {0};
 	if (ioctl(0, TIOCGWINSZ, &d_ws) < 0)
 		return "";
-	memset(wsbuf, 0, sizeof(wsbuf));
 	snprintf(wsbuf, sizeof(wsbuf), "WS:%hu:%hu:%hu:%hu", d_ws.ws_row,
 	         d_ws.ws_col, d_ws.ws_xpixel, d_ws.ws_ypixel);
 	return possibly_b64encrypt("C:", wsbuf);
