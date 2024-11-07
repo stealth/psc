@@ -1,7 +1,7 @@
 /*
  * This file is part of port shell crypter (psc).
  *
- * (C) 2006-2023 by Sebastian Krahmer,
+ * (C) 2006-2024 by Sebastian Krahmer,
  *                  sebastian [dot] krahmer [at] gmail [dot] com
  *
  * psc is free software: you can redistribute it and/or modify
@@ -20,6 +20,7 @@
 
 
 #include <cstdio>
+#include <cstdint>
 #include <cstdlib>
 #include <string>
 #include <vector>
@@ -273,13 +274,18 @@ int proxy_loop()
 	udp_node2id udp_nodes2id;
 
 	int max_fd = rl.rlim_cur - 1, script_fd = -1;
+#ifdef RESPECT_UART_BUFSIZE
+	uint32_t tx_rate_cnt = 0;
+#endif
 
-	string ext_cmd = "", tbuf = "", bcmd = "";
+	string ext_cmd = "", tbuf = "";
+	string bcmd = "", bcmd_in_log_str = "", bcmd_out_log_str = "", bcmd_buffered_output = "";
+	const string BCMD_GO_CMD = "GO\n";
 
 	enum { CHUNK_SIZE = 8192 };
 
-	timeval last_tx_tv;
-	memset(&last_tx_tv, 0, sizeof(last_tx_tv));
+	timeval last_tv;
+	memset(&last_tv, 0, sizeof(last_tv));
 
 	for (;;) {
 
@@ -398,22 +404,34 @@ int proxy_loop()
 
 								// do not echo back bcmd inject that happens just after STATE_BCMD_CONNECT
 								if (fd2state[bcmd_accept_fd].state == STATE_BCMD_CONNECT) {
+									bcmd_buffered_output += tbuf;
 
-									// If we see the newline echoed back, strip off until newline and only forward real potential data.
+									// If we see the desired string "GO" echoed back, strip off until newline and only forward real potential data that follows "GO\n".
 									// Otherwise the echo was just partial and we need to wait until full echo
 									string::size_type nl = string::npos;
-									if ((nl = tbuf.find("\n")) != string::npos) {
-										fd2state[bcmd_accept_fd].obuf += tbuf.substr(nl + 1);
+									if ((nl = bcmd_buffered_output.find(BCMD_GO_CMD)) != string::npos) {
+										fd2state[bcmd_accept_fd].obuf += bcmd_buffered_output.substr(nl + BCMD_GO_CMD.size());
 										fd2state[bcmd_accept_fd].state = STATE_BCMD_CONNECTED;
 										pfds[bcmd_accept_fd].events |= POLLIN;
 										if (!fd2state[bcmd_accept_fd].obuf.empty())
 											pfds[bcmd_accept_fd].events |= POLLOUT;
+										bcmd_in_log_str += bcmd_buffered_output;
+										bcmd_buffered_output.clear();
+
+										sleep(3);	// We need to sleep since between "echo GO" and "nc 127.0.0.1 22" commands on remote, we want nc to have the
+												// stdin/stdout assigned and not dumping data to it before nc started
 									}
 								} else { // must be STATE_BCMD_CONNECTED, forward as is
-									fd2state[1].obuf += "\r\n< " + trim_bcmd_output(tbuf);
-									pfds[1].events |= POLLOUT;
 									fd2state[bcmd_accept_fd].obuf += tbuf;
 									pfds[bcmd_accept_fd].events |= POLLOUT;
+
+									bcmd_in_log_str += tbuf;
+
+									if (bcmd_in_log_str.size() >= 75) {
+										fd2state[1].obuf += "\r\n< " + trim_bcmd_output(bcmd_in_log_str);
+										bcmd_in_log_str.clear();
+										pfds[1].events |= POLLOUT;
+									}
 								}
 
 							// No -> only forward to stdout as is
@@ -440,7 +458,7 @@ int proxy_loop()
 					// append ID part of host/port/id/ header. We use the accepted sock fd
 					// as ID, as this is unique and identifies the TCP connection
 					char id[16] = {0};
-					snprintf(id, sizeof(id) - 1, "%04hx/", afd);
+					snprintf(id, sizeof(id) - 1, "%04hx/", (uint16_t)afd);
 
 					pfds[afd].fd = afd;
 					pfds[afd].events = 0;	// dont accept data until remote peer established proxy conn
@@ -478,7 +496,7 @@ int proxy_loop()
 					fd2state[afd].obuf.clear();
 
 					pfds[pt.master()].events |= POLLOUT;
-					fd2state[pt.master()].obuf += fd2state[i].rnode + "\n";	// trigger connect via command (e.g. `nc example.com 22`) on remote side
+					fd2state[pt.master()].obuf += fd2state[i].rnode + "\n";	// trigger connect via command (e.g. `...nc example.com 22`) on remote side
 
 					bcmd_accept_fd = afd;
 					bcmd = fd2state[i].rnode;
@@ -586,7 +604,7 @@ int proxy_loop()
 					// Now that we know where connection is going to, we can build
 					// IP/port/ID header
 					char hdr[256] = {0};
-					snprintf(hdr, sizeof(hdr) - 1, "%s/%04hx/%04hx/", dst, rport, i);
+					snprintf(hdr, sizeof(hdr) - 1, "%s/%04hx/%04hx/", dst, rport, (uint16_t)i);
 
 					fd2state[i].rnode = hdr;
 					fd2state[i].state = STATE_CONNECT;
@@ -663,7 +681,7 @@ int proxy_loop()
 					// Now that we know where connection is going to, we can build
 					// IP/port/ID header
 					char hdr[256] = {0};
-					snprintf(hdr, sizeof(hdr) - 1, "%s/%04hx/%04hx/", dst, rport, i);
+					snprintf(hdr, sizeof(hdr) - 1, "%s/%04hx/%04hx/", dst, rport, (uint16_t)i);
 
 					fd2state[i].rnode = hdr;
 					fd2state[i].state = STATE_CONNECT;
@@ -754,26 +772,31 @@ int proxy_loop()
 
 					// We need to throttle amount of data/usec in cases where bounce command was
 					// given since remote pty is in raw mode w/o flow control or we run across a serial
-					// line that has a baud rate set
+					// line that has a baud rate set.
 					if (config::rate_limit_bytes) {
-						if (n > 128)
-							n = 128;
+						n = 1;
+
 						timeval now_tv;
 						gettimeofday(&now_tv, nullptr);
 
-						time_t sec_diff = now_tv.tv_sec - last_tx_tv.tv_sec;
+						// In usec.
+						uint64_t tdiff_usec = now_tv.tv_sec*1000000 + now_tv.tv_usec - (last_tv.tv_sec*1000000 + last_tv.tv_usec);
 
-						// If time was alredy taken and last write to pty was <=1 s ago
-						if (last_tx_tv.tv_sec && sec_diff <= 1) {
-							suseconds_t usec_diff = now_tv.tv_usec - last_tx_tv.tv_usec;
-							if (!usec_diff)
-								usec_diff = 1;
-
-							// what we want to write is fitting into rate-limit with accuracy of usec (factor 1000.000)?
-							if ((n+1)*1000000 / (sec_diff*1000000 + usec_diff) >= config::rate_limit_bytes) {
+						// This formula only works for rates < 1.000.000 Byte/sec which is guaranteed by the baudrates that we accept.
+						if (tdiff_usec < (1000000*1.0/config::rate_limit_bytes))
+							continue;
+#if RESPECT_UART_BUFSIZE
+						// Try to give UART buffers time to get flushed.
+						if (++tx_rate_cnt >= RESPECT_UART_BUFSIZE) {
+							if (tdiff_usec < 1000000)
 								continue;
-							}
+							else
+								tx_rate_cnt = 0;
 						}
+#endif
+
+						last_tv.tv_sec = now_tv.tv_sec;
+						last_tv.tv_usec = now_tv.tv_usec;
 
 						// It fits into limit, go ahead with writing.
 					}
@@ -785,12 +808,14 @@ int proxy_loop()
 							die(psc->why());
 					}
 
-					if (config::rate_limit_bytes) {
-						gettimeofday(&last_tx_tv, nullptr);
 
-						// If we are bouncing binary data to a remote cmd, make some nice local progress output.
-						if (bcmd_accept_fd >= 0 && fd2state[bcmd_accept_fd].state == STATE_BCMD_CONNECTED) {
-							fd2state[1].obuf += "\r\n> " + trim_bcmd_output(fd2state[i].obuf.substr(0, r < 75 ? r : 75));
+					// If we are bouncing binary data to a remote cmd, make some nice local progress output.
+					if (bcmd_accept_fd >= 0 && fd2state[bcmd_accept_fd].state == STATE_BCMD_CONNECTED) {
+						bcmd_out_log_str += fd2state[i].obuf.substr(0, r);
+
+						if (bcmd_out_log_str.size() >= 75) {
+							fd2state[1].obuf += "\r\n> " + trim_bcmd_output(bcmd_out_log_str);
+							bcmd_out_log_str.clear();
 							pfds[1].events |= POLLOUT;
 						}
 					}
@@ -875,7 +900,7 @@ int proxy_loop()
 
 int main(int argc, char **argv)
 {
-	printf("\nPortShellCrypter [pscl] v0.68 (C) 2006-2023 stealth -- github.com/stealth/psc\n\n");
+	printf("\nPortShellCrypter [pscl] v0.69 (C) 2006-2024 stealth -- github.com/stealth/psc\n\n");
 
 	if (!getenv("SHELL")) {
 		printf("pscl: No $SHELL set in environment. Exiting.\n");
@@ -918,6 +943,7 @@ int main(int argc, char **argv)
 	char bounce_cmd[128] = {0};
 	uint16_t rport = 0;
 	string bauds = "";
+	bool rate_limit_set = 0;
 
 	while ((c = getopt(argc, argv, "T:U:X:5:4:S:B:l:hN")) != -1) {
 		switch (c) {
@@ -969,7 +995,10 @@ int main(int argc, char **argv)
 			break;
 		case 'l':
 			if (config_set_baud_limit(optarg) < 0)
-				printf("pscl: Invalid baud rate. Must be one of 576000, 230400, 115200, 57600, 38400 or 9600\n");
+				printf("pscl: Invalid baud rate. Must be one of 576000, 230400, 115200, 57600,\n"
+				       "pscl: 38400, 9600 or 0.\n");
+			else
+				rate_limit_set = 1;
 			break;
 		case 'h':
 		default:
@@ -979,7 +1008,7 @@ int main(int argc, char **argv)
 	}
 
 	// If using bounce cmds, set a default baud rate if none was given
-	if (config::bcmd_tcp_listens.size() > 0 && !config::rate_limit_bytes)
+	if (config::bcmd_tcp_listens.size() > 0 && !rate_limit_set)
 		config::rate_limit_bytes = 115200/8;
 
 	printf("\npscl: Waiting for [pscr] session to appear ...\n");

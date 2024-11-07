@@ -111,7 +111,7 @@ int unix_listen(const string &path)
 
 	memset(&sun, 0, sizeof(sun));
 	sun.sun_family = AF_UNIX;
-	strcpy(sun.sun_path, path.c_str());
+	snprintf(sun.sun_path, sizeof(sun.sun_path) - 1, "%s", path.c_str());
 
 	mode_t um = umask(077);
 	if (::bind(sfd, reinterpret_cast<sockaddr *>(&sun), sizeof(sun)) < 0) {

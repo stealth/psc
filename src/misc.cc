@@ -77,6 +77,8 @@ int config_set_baud_limit(const string &bauds)
 		config::rate_limit_bytes = 38400/8;
 	else if (bauds == "9600")
 		config::rate_limit_bytes = 9600/8;
+	else if (bauds == "0")
+		config::rate_limit_bytes = 0;
 	else
 		return -1;
 

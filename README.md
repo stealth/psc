@@ -117,7 +117,6 @@ The session will be encrypted with `aes_256_ctr` of a PSK that you choose in the
 the packet size, where every byte counts since on interactive sessions and due to
 Base64 encoding, each typed character already causes much more data to be sent.
 
-
 UART sessions may be used via `screen` but for example not via `minicom` since
 minicom will create invisible windows with status lines and acts like a filter
 that destroys PSC's protocol. PSC tries to detect filtering and can live with
@@ -154,58 +153,80 @@ to an address different from `127.0.0.1`, so you can share the proxy in your loc
 Bounce commands
 ---------------
 
-*psc* contains features to allow TCP-connections or binary data blobs being forwarded from/to remote
+*psc* features allow TCP-connections or binary data blobs being forwarded from/to remote
 devices across multiple hops even if it is not possible to install the `pscr` binary at
 the remote site. This is very useful for forensic purposes if you do not have any means
 to otherwise download artefacts from the device (which can be an UART connected phone for example)
 or need to forward connections without touching the FS to not destroy evidence on the system
 or when the root-FS is ro mounted and you can't upload your tool-set.
 
+This is a really cool feature, as you can see your TCP connection hop through your local tty
+to a remote box without the need to install anything remotely.
+
 This solely works by local pty punkrock and handing over a bounce-command to `pscl` that it will
 drop on the remote shell (without `pscr` running) and some state engine magic that filters out
 and handles the data at the local side. Usually this requires to set the remote pty to raw mode
-at first before issuing the actual command.
+at first before issuing the actual command and some other details that are passed to `-B`. The
+argument is split into the following parts:
+
+* The local port to trigger the command upon connect, followed by `:`, e.g. `1234:`.
+* The cmd that sets the remote tty to raw mode, usually `stty -echo raw` or
+  `python -c "import tty;tty.setraw(0)"` (take care to get the quotes right, as `-B` also needs
+  to be quoted) or anything similar.
+* A "GO" marker issued by remote that tells `pscl` to start sending data to avoid a race between
+  `stty` actually happen and the start of the cmd, e.g. a `echo GO` is perfect.
+* The trigger command itself, e.g. `nc 127.0.0.1 22` to bounce local port 1234 to remote's SSH
+  server
+* optionally a FIN marker issued by remote so you notice that trigger command has been finished
+  i.e. you can kill your local connection to port 1234, which allows `pscl` to reset its tty state.
+  `echo FIN` will do it. Recommended, as otherwise you can have trouble recognizing the end of
+  your command.
+* All four previous commands are separated by `;` and enclosed in brackets.
+
+Examples:
 
 If you want to forward a TCP connection, this example requires `stty` and `nc` installed on the
 device, but it could theoretically be anything else that does equivalent.
 
 Start a local session:
 
-`TERM=dumb ./pscl -B '1234:[stty -echo raw;nc example.com 22]'`
+`./pscl -B '1234:[stty -echo raw;echo GO;nc example.com 22;echo FIN]'`
 
-This will issue the command `stty -echo raw;nc example.com 22` to the remote device if you
-connect locally to port 1234 and then just forwards any data it sees back and forth and
-rate-limiting the traffic so it will not exceed the devices' tty speed (115200 is the default).
+This will issue the command `stty -echo raw;echo GO;nc example.com 22;echo FIN` to the remote
+device if you connect locally to port 1234 and then just forwards any data it sees back and forth
+and rate-limiting the traffic so it will not exceed the devices' tty speed (115200 is the default).
 
-When the local session is started, connect to the remote device by UART, ssh or whatever it is and once
-you have the remote shell, also type locally:
+When the pscl session is started, connect to the remote device by UART, `ssh -e none ...` or
+whatever it is and once you have the remote shell, also type locally:
 
 `ssh root@127.0.0.1 -p 1234` to bounce the SSH connection from your local box across the remote
-device to the `example.com` destination. Of course the `pscr` variant is preferred as it is only possible
-to bounce a single connection at a time (although you can pass multiple `-B` commands for various
+device to the `example.com` destination. Of course the `pscr` variant is preferred as `-B` can only
+bounce a single connection at a time (although you can pass multiple `-B` commands for various
 forwards) and theres a chance to hang the shell after the TCP session since the pty is in `raw -echo`
 mode and depending on whether the final remote peer also closes the connection, it might be
 that the shell just hangs after that. If you happen to find a pscl notification that the connection
 has finished and see a prompt, you should `reset` it, so that a new connection can be started.
-While data is being forwarded, you will see 7bit ASCII `<` and `>` notifications in `pscl` which are just
-local for easier debugging and progress detection.
+While data is being forwarded, you will see 7bit ASCII `<` and `>` notifications in `pscl` which
+are just local for easier debugging and progress detection.
 
-Note that the connection to the remote site has to be 8bit clean, i.e. the ssh, telnet, UART or whatever
-channel *must not handle escape sequences* (unlike when using `pscr`). For ssh connections this means you
-have to use `ssh -e none` in the `pscl` session.
+Note that the connection to the remote site has to be 8bit clean, i.e. the ssh, telnet, UART or
+whatever channel *must not handle escape sequences* (unlike when using `pscr`). For ssh connections
+this means you have to use `ssh -e none` in the `pscl` session.
 
 Next, following some examples to handle binary file xfer where *rfile* denotes the remote file and
 *lfile* the local file.
 
 To start a session to drop remote files, locally:
 
-`TERM=dumb ./pscl -B '1234:[stty -echo raw;dd of=rfile.bin bs=1 count=7350;echo FIN]'`
+`./pscl -B '1234:[stty -echo raw;echo GO;dd of=rfile.bin bs=1 count=7350;echo FIN]'`
 
 Where you need to specify the amount of data that the remote side is expecting. It would also
 work without (e.g. `cat>...`) but then the session will hang after transmission has finished as
-`cat` is endlessly expecting input.
+`cat` is endlessly expecting input. By using `dd count=...`, you will get a clean exit and be notified
+about it by the FIN marker.
 
-Then, ssh or whatever is necessary to get a shell on the remote device. Again, locally:
+Then, ssh or whatever is necessary to get a shell on the remote device from within the just
+started `pscl` session. On a second terminal locally:
 
 `dd if=lfile.bin|nc 127.0.0.1 1234`
 
@@ -214,14 +235,15 @@ forwarding the binary data of the local `lfile.bin` to remotes `rfile.bin`. Due 
 this can take a while and you *only trust your psc progress screen* whether the transfer is finished.
 The local `dd ...|nc ...` command will only show you the local status which can eat entire files
 in msecs due to local TCP buffers while the file is still being transfered through the pty.
-So make sure you only press `Ctrl-C` when the *psc* screen tells you it is finished.
+So make sure you only press `Ctrl-C` when the *pscl* screen tells you it is finished or you see
+the `FIN` end marker being echoed back to you on the `dd ...|nc ...` session.
 
 Likewise, similar commands could be used to transfer binary data from a remote device to the
 local box for forensic purposes. Again, start of the session locally:
 
-`TERM=dumb ./pscl -B '1234:[stty -echo raw;dd if=rfile.bin]'` or
+`./pscl -B '1234:[stty -echo raw;echo GO;dd if=rfile.bin]'` or
 
-`TERM=dumb ./pscl -B '1234:[stty -echo raw;cat rfile.bin]'`
+`./pscl -B '1234:[stty -echo raw;echo GO;cat rfile.bin]'`
 
 Then, ssh to remote device to get the shell, then again locally:
 
@@ -229,35 +251,51 @@ Then, ssh to remote device to get the shell, then again locally:
 
 To obtain `rfile.bin` of size 7350 copied to local file `lfile.bin`
 
-If `stty -echo raw` is not available on the device, something like `python -c 'import tty;tty.setraw(0)'`
-also works. Note that on the remote device you need to have a tty (not just a port-shell) when using bounce
-commands, since the `stty` command to set raw mode requires a real tty.
-
-If doing all the tests only locally w/o any connection between `pscl` and the command that you bounce,
-you need to add `TERM=dumb` before the `pscl ...` comands. It can be omitted if running across a connection.
+If `stty -echo raw` is not available on the device, something like
+`python -c "import tty;tty.setraw(0)"` also works. Note that on the remote device you need to have
+a tty (not just a port-shell) when using bounce commands, since the `stty` command to set raw mode
+requires a real tty.
 
 
-Flow control
-------------
+UART / modems / Flow Control
+----------------------------
 
-If *psc* runs across a serial connection, it is very likely that flow control is disabled and sending data
-too fast would just make it vanish and corrupt the session. In this case you have to invoke *both ends* with
-the `-l` parameter to set a baud rate (e.g. `-l 115200`). If bounce commands are used the same problem exists
-with the pty in raw mode and rate limiting is automatically enabled to `115200` but a higher value
-can be set if desired.
-Note that browsing animated web sites is pure PITA with rate limiting from the 90's even though *psc*
-does its best to still allow typing the shell during the connection. SSH connections OTOH work surprisingly
-good.
+If *psc* runs across a serial connection, lost bits can kill all your fun. If you run
+without HW FC you will eventually experience bitloss and hung connections, in particular
+as there is no throttling when the device is sending data in your direction when using
+*bounce commands*. Dumping data to the device works better as this data goes through
+the `pscl` rate limits.
 
-UART / modem line
------------------
+However, here are some tips that worked for me under circumstances when it is not
+possible to use `pscr` on the device and HW FC. This only applies when using UARTs, as this
+is a potentially unreliable transport channel.
 
-Some UART chipsets seem to have different RX vs TX speeds. So even though you have a 115200 baud
-UART connection set up, the local (upload) part is even more limited or otherwise data bits are lost.
-During my raspi tests, I had to use `pscl -l 57600 ...` on the local side while using `pscr -l 115200 ...`
-on the device. For bounce-commands I also had to use the 57600 even if the connection was at 115200.
-If possible also use soft flow control with your serial console program. Also check the `contrib`
-folder in order to patch your console program to be escape-character safe.
+* do not enable soft FC, as this would tamper the 8-bit channel
+* when possible use HW FC - or if not - you have to disable FC alltogether
+* Use `pscr` on the device so you can set rate limiting for data being sent into your direction.
+  As the direction towards the device is always rate limited, you can use bounce commands to
+  dump a cross-compiled `pscr` binary to the device and start a two-way rate limited session with it.
+* use high quality cables with proper shielding and UART chipsets with large buffers
+* apply the tio-limit patch from the contrib folder, as tio is buffering input bytes which could
+  lead to writing-peeks that exceed the set rate
+* use `tio -o 1` or `-o 2` to add delays between sent output-bytes
+* use a conservative rate limitig (i.e. prefer `38400` although serial line has set `115200`)
+* compile `psc` with `-DRESPECT_UART_BUFSIZE=4096`, however this will make the session very slow
+
+Inside the `contrib` folder you will also find a `tio-noprefix` patch to disable escape-character
+processing but this patch is only necessary for older versions, as upstream already accepted and
+integrated this patch. I really recommend using `tio` when using UARTs.
+
+
+When using bounce commands across *tio*, you have to add to your `~/.tioconfig` file:
+
+```
+[default]
+
+prefix-ctrl-key = none
+```
+
+which disables ESC-handling and gives you an 8-bit clean channel.
 
 
 SIGUSR1 / SIGUSR2

@@ -1,7 +1,7 @@
 /*
  * This file is part of port shell crypter (psc).
  *
- * (C) 2006-2023 by Sebastian Krahmer,
+ * (C) 2006-2024 by Sebastian Krahmer,
  *                  sebastian [dot] krahmer [at] gmail [dot] com
  *
  * psc is free software: you can redistribute it and/or modify
@@ -19,6 +19,7 @@
  */
 
 #include <cstdio>
+#include <cstdint>
 #include <string>
 #include <fcntl.h>
 #include <signal.h>
@@ -54,7 +55,7 @@ bool exit_attr_set = 0;
 
 }
 
-const string banner = "\nPortShellCrypter [pscr] v0.68 (C) 2006-2023 stealth -- github.com/stealth/psc\n\n";
+const string banner = "\nPortShellCrypter [pscr] v0.69 (C) 2006-2024 stealth -- github.com/stealth/psc\n\n";
 
 
 // magic banner to start encryption. If changed here, also change in pcwrap.cc
@@ -176,8 +177,12 @@ int proxy_loop()
 
 	enum { CHUNK_SIZE = 8192 };
 
-	timeval last_tx_tv;
-	memset(&last_tx_tv, 0, sizeof(last_tx_tv));
+#ifdef RESPECT_UART_BUFSIZE
+	uint32_t tx_rate_cnt = 0;
+#endif
+
+	timeval last_tv;
+	memset(&last_tv, 0, sizeof(last_tv));
 
 	do {
 		memset(sbuf, 0, sizeof(sbuf));
@@ -244,6 +249,7 @@ int proxy_loop()
 						breakout = 1;
 						break;
 					}
+					fd2state[i].time = now;
 					fd2state[1].time = now;
 					fd2state[1].obuf += psc.possibly_b64encrypt("D:0:", string(sbuf, r));
 					pfds[1].events |= POLLOUT;
@@ -284,12 +290,15 @@ int proxy_loop()
 						fd2state[1].obuf += psc.possibly_b64encrypt("C:T:F:", fd2state[i].rnode);	// signal finished connection via stdout to remote
 						continue;
 					}
+					fd2state[i].time = now;
 
 					pfds[1].events |= POLLOUT;
 					fd2state[1].obuf += psc.possibly_b64encrypt("C:T:R:", fd2state[i].rnode + string(sbuf, r));	// received TCP data
 				} else if (fd2state[i].state == STATE_UDPCLIENT) {
 					if ((r = recv(i, sbuf, sizeof(sbuf), 0)) <= 0)
 						continue;
+
+					fd2state[i].time = now;
 
 					pfds[1].events |= POLLOUT;
 					fd2state[1].obuf += psc.possibly_b64encrypt("C:U:R:", fd2state[i].rnode + string(sbuf, r));	// received UDP data
@@ -304,6 +313,7 @@ int proxy_loop()
 						break;
 					}
 
+					fd2state[i].time = now;
 					fd2state[i].obuf.erase(0, r);
 				} else if (fd2state[i].state == STATE_STDOUT) {
 
@@ -311,25 +321,29 @@ int proxy_loop()
 					// given since remote pty is in raw mode w/o flow control or we run across a serial
 					// line that has a baud rate set
 					if (config::rate_limit_bytes) {
+						n = 1;
 
-						if (n > 128)
-							n = 128;
 						timeval now_tv;
 						gettimeofday(&now_tv, nullptr);
 
-						time_t sec_diff = now_tv.tv_sec - last_tx_tv.tv_sec;
+						// In usec.
+						uint64_t tdiff_usec = now_tv.tv_sec*1000000 + now_tv.tv_usec - (last_tv.tv_sec*1000000 + last_tv.tv_usec);
 
-						// If time was alredy taken and last write to pty was <=1 s ago
-						if (last_tx_tv.tv_sec && sec_diff <= 1) {
-							suseconds_t usec_diff = now_tv.tv_usec - last_tx_tv.tv_usec;
-							if (!usec_diff)
-								usec_diff = 1;
-
-							// what we want to write is fitting into rate-limit with accuracy of usec (factor 1000.000)?
-							if ((n+1)*1000000 / (sec_diff*1000000 + usec_diff) >= config::rate_limit_bytes) {
+						// This formula only works for rates < 1.000.000 Byte/sec which is guaranteed by the baud rates that we accept
+						if (tdiff_usec < (1000000*1.0/config::rate_limit_bytes))
+							continue;
+#if RESPECT_UART_BUFSIZE
+						// Try to give UART buffers time to get flushed.
+						if (++tx_rate_cnt >= RESPECT_UART_BUFSIZE) {
+							if (tdiff_usec < 1000000)
 								continue;
-							}
+							else
+								tx_rate_cnt = 0;
 						}
+#endif
+
+						last_tv.tv_sec = now_tv.tv_sec;
+						last_tv.tv_usec = now_tv.tv_usec;
 
 						// It fits into limit, go ahead with writing.
 					}
@@ -339,9 +353,7 @@ int proxy_loop()
 						break;
 					}
 
-					if (config::rate_limit_bytes)
-						gettimeofday(&last_tx_tv, nullptr);
-
+					fd2state[i].time = now;
 					fd2state[i].obuf.erase(0, r);
 				} else if (fd2state[i].state == STATE_CONNECT) {
 					int e = 0;
@@ -384,6 +396,7 @@ int proxy_loop()
 						continue;
 					}
 
+					fd2state[i].time = now;
 					fd2state[i].obuf.erase(0, r);
 				} else if (fd2state[i].state == STATE_UDPCLIENT) {
 					string &dgram = fd2state[i].odgrams.front().second;
@@ -392,6 +405,7 @@ int proxy_loop()
 					if ((r = send(i, dgram.c_str(), dgram.size(), 0)) <= 0)
 						continue;
 
+					fd2state[i].time = now;
 					fd2state[i].odgrams.pop_front();
 				}
 
@@ -404,7 +418,10 @@ int proxy_loop()
 	if (exit_attr_set)
 		tcsetattr(fileno(stdin), TCSANOW, &exit_tattr);
 
-	string ex = psc.possibly_b64encrypt("C:", "exit:0");
+	// send any left input data along with exit cmd
+	string ex = fd2state[psc.w_fileno()].obuf;
+	fd2state[psc.w_fileno()].obuf.clear();
+	ex += psc.possibly_b64encrypt("C:", "exit:0");
 	writen(psc.w_fileno(), ex.c_str(), ex.size());
 	return 0;
 }
@@ -516,7 +533,7 @@ int main(int argc, char **argv)
 	setvbuf(stderr, nullptr, _IONBF, 0);
 
 	int c = 0;
-	bool no_nagle = 0, b64_encoded = 0;
+	bool no_nagle = 0, b64_encoded = 0, invalid_rate = 0;
 	string bauds = "";
 
 	while ((c = getopt(argc, argv, "E:l:DNh")) != -1) {
@@ -535,7 +552,7 @@ int main(int argc, char **argv)
 			break;
 		case 'l':
 			if (config_set_baud_limit(optarg) < 0)
-				printf("pscr: Invalid baud rate. Must be one of 576000, 230400, 115200, 57600, 38400 or 9600\n");
+				invalid_rate = 1;
 			break;
 		case 'h':
 		default:
@@ -546,6 +563,10 @@ int main(int argc, char **argv)
 
 	if (!b64_encoded) {
 		printf("%s", banner.c_str());
+
+		if (invalid_rate)
+			printf("pscr: Invalid baud rate. Must be one of 576000, 230400, 115200, 57600,\n"
+			       "pscr: 38400, 9600 or 0.\n");
 
 		if (!getenv("SHELL")) {
 			printf("pscr: No $SHELL set in environment. Exiting.\n");

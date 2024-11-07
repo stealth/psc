@@ -1,0 +1,41 @@
+diff --git a/src/tty.c b/src/tty.c
+index 74f6ab3..9392552 100644
+--- a/src/tty.c
++++ b/src/tty.c
+@@ -27,6 +27,7 @@
+ #include <stdarg.h>
+ #include <stdio.h>
+ #include <stdlib.h>
++#include <stdint.h>
+ #include <sys/time.h>
+ #include <unistd.h>
+ #include <string.h>
+@@ -224,16 +225,27 @@ inline static unsigned char char_to_nibble(char c)
+ void tty_sync(int fd)
+ {
+     ssize_t count;
++    struct timeval tv;
++    static struct timeval last_tv = {0, 0};
++    uint32_t byte_rate = option.baudrate/10, idx = 0;
+ 
+     while (tty_buffer_count > 0)
+     {
+-        count = write(fd, tty_buffer, tty_buffer_count);
++	gettimeofday(&tv, NULL);
++	uint64_t tdiff_usec = tv.tv_sec*1000000 + tv.tv_usec - (last_tv.tv_sec*1000000 + last_tv.tv_usec);
++	if (tdiff_usec < (1000000*1.0/byte_rate))
++		continue;
++        last_tv.tv_sec = tv.tv_sec;
++	last_tv.tv_usec = tv.tv_usec;
++
++        count = write(fd, tty_buffer + idx, 1);
+         if (count < 0)
+         {
+             // Error
+             tio_debug_printf("Write error while flushing tty buffer (%s)", strerror(errno));
+             break;
+         }
++	idx += count;
+         tty_buffer_count -= count;
+         fsync(fd);
+         tcdrain(fd);
